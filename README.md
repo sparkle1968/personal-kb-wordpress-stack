@@ -122,11 +122,11 @@ personal-kb-wordpress-stack
 
 完整发布步骤见：[docs/PUBLISH_GITHUB_GITEE.md](docs/PUBLISH_GITHUB_GITEE.md)。
 
-发布后可在这里补充真实地址：
+当前发布地址：
 
 ```markdown
-主仓库：<https://github.com/YOUR_GITHUB_USER/personal-kb-wordpress-stack>
-国内镜像：<https://gitee.com/YOUR_GITEE_USER/personal-kb-wordpress-stack>
+主仓库：<https://github.com/sparkle1968/personal-kb-wordpress-stack>
+国内镜像：导入 Gitee 后补充
 ```
 
 ## 目录
