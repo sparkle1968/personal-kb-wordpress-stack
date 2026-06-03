@@ -28,19 +28,25 @@ git commit -m "Initial open source release"
 
 ## 2. 推送到 GitHub 主仓库
 
-在 GitHub 新建空仓库，不要在网页上初始化 README、LICENSE 或 `.gitignore`。
+在 GitHub 新建空仓库，仓库名建议为：
+
+```text
+personal-kb-wordpress-stack
+```
+
+不要在网页上初始化 README、LICENSE 或 `.gitignore`。
 
 然后在本地添加 GitHub 远端：
 
 ```bash
-git remote add origin git@github.com:YOUR_GITHUB_USER/home-wordpress-stack.git
+git remote add origin git@github.com:YOUR_GITHUB_USER/personal-kb-wordpress-stack.git
 git push -u origin main
 ```
 
 如果使用 HTTPS：
 
 ```bash
-git remote add origin https://github.com/YOUR_GITHUB_USER/home-wordpress-stack.git
+git remote add origin https://github.com/YOUR_GITHUB_USER/personal-kb-wordpress-stack.git
 git push -u origin main
 ```
 
@@ -49,7 +55,7 @@ git push -u origin main
 在 Gitee 选择“从 GitHub/GitLab 导入仓库”，填入 GitHub 仓库地址：
 
 ```text
-https://github.com/YOUR_GITHUB_USER/home-wordpress-stack
+https://github.com/YOUR_GITHUB_USER/personal-kb-wordpress-stack
 ```
 
 建议 Gitee 仓库说明写明：
@@ -73,6 +79,6 @@ git push origin main
 发布后可在 README 增加：
 
 ```markdown
-主仓库：<https://github.com/YOUR_GITHUB_USER/home-wordpress-stack>
-国内镜像：<https://gitee.com/YOUR_GITEE_USER/home-wordpress-stack>
+主仓库：<https://github.com/YOUR_GITHUB_USER/personal-kb-wordpress-stack>
+国内镜像：<https://gitee.com/YOUR_GITEE_USER/personal-kb-wordpress-stack>
 ```
