@@ -1961,6 +1961,61 @@ input:focus-visible {
   background: #111;
 }
 
+.kb-front-edit {
+  width: min(100%, 760px);
+  margin: 0 auto 1.5rem;
+}
+
+.kb-front-edit details {
+  border: 1px solid rgba(52, 59, 51, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 250, 0.82);
+  box-shadow: var(--kb-shadow);
+  overflow: hidden;
+}
+
+.kb-front-edit summary {
+  min-height: 44px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  color: var(--kb-blue);
+  font: 700 14px/1 var(--kanso-sans);
+  cursor: pointer;
+}
+
+.kb-front-edit-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-top: 1px solid rgba(52, 59, 51, 0.1);
+}
+
+.kb-front-edit .wp-editor-wrap {
+  min-width: 0;
+}
+
+.kb-front-edit .wp-editor-container {
+  border: 1px solid rgba(52, 59, 51, 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.kb-front-edit .mce-tinymce,
+.kb-front-edit textarea.wp-editor-area {
+  width: 100% !important;
+}
+
+.kb-front-edit-notice {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--kb-sage);
+  border-radius: 8px;
+  background: rgba(96, 119, 91, 0.1);
+  color: var(--kb-ink);
+  font: 700 14px/1.45 var(--kanso-sans);
+}
+
 .source-note,
 .private-archive {
   border: 1px solid rgba(75, 103, 113, 0.18);

@@ -1352,6 +1352,8 @@ function home_workflow_kb_sidebar($active_view, $categories, $category_counts, $
     $trash_url = isset($options['trash_url']) ? (string) $options['trash_url'] : home_workflow_kb_view_url('trash', $active_category_id);
     $sync_url = isset($options['sync_url']) ? (string) $options['sync_url'] : home_workflow_kb_view_url('sync', $active_category_id);
     $accounts_url = isset($options['accounts_url']) ? (string) $options['accounts_url'] : home_workflow_kb_view_url('accounts', $active_category_id);
+    $draft_url = isset($options['draft_url']) ? (string) $options['draft_url'] : add_query_arg('kb_status', 'draft', home_url('/'));
+    $draft_active = !empty($options['draft_active']);
     $category_manager_url = isset($options['category_manager_url'])
         ? (string) $options['category_manager_url']
         : home_workflow_kb_home_url_with_category($active_category_id, 'kb-category-manager');
@@ -1372,7 +1374,7 @@ function home_workflow_kb_sidebar($active_view, $categories, $category_counts, $
             <?php echo home_workflow_kb_nav_link($home_url, '目录', $home_active); ?>
             <?php echo home_workflow_kb_nav_link($home_search_url, '检索', $search_active); ?>
             <?php if ($can_edit) : ?>
-                <?php echo home_workflow_kb_nav_link(admin_url('edit.php'), '草稿'); ?>
+                <?php echo home_workflow_kb_nav_link($draft_url, '草稿', $draft_active); ?>
                 <?php echo home_workflow_kb_nav_link($new_url, '新资料', $new_active, 'target="_blank" rel="noopener noreferrer"'); ?>
             <?php endif; ?>
             <?php if (current_user_can('delete_posts')) : ?>
@@ -1469,6 +1471,89 @@ function home_workflow_kb_autop_content($raw_content) {
     }
 
     return wp_kses_post(wpautop($raw_content));
+}
+
+function home_workflow_kb_frontend_edit_url($post_id, $extra_args = []) {
+    $post_id = absint($post_id);
+    $status = (string) get_post_status($post_id);
+    if (in_array($status, ['draft', 'pending', 'future'], true)) {
+        $url = get_preview_post_link($post_id);
+        if (!$url) {
+            $url = get_permalink($post_id);
+        }
+    } else {
+        $url = get_permalink($post_id);
+    }
+
+    return add_query_arg(array_merge(['kb_edit' => '1'], $extra_args), $url);
+}
+
+add_action('wp_enqueue_scripts', function () {
+    if (home_workflow_site_kind() !== 'kb' || !is_singular('post')) {
+        return;
+    }
+
+    $post_id = get_queried_object_id();
+    if ($post_id && current_user_can('edit_post', $post_id)) {
+        wp_enqueue_editor();
+    }
+});
+
+function home_workflow_kb_frontend_edit_controls($post_id) {
+    if (home_workflow_site_kind() !== 'kb' || home_workflow_current_request_is_public_share()) {
+        return '';
+    }
+
+    $post_id = absint($post_id);
+    $post = $post_id ? get_post($post_id) : null;
+    if (!$post instanceof WP_Post || $post->post_type !== 'post' || !current_user_can('edit_post', $post_id)) {
+        return '';
+    }
+
+    $is_open = !empty($_GET['kb_edit']) || !empty($_GET['kb_saved']);
+    $form_action = home_workflow_kb_frontend_edit_url($post_id);
+    $cancel_url = get_permalink($post_id);
+
+    ob_start();
+    ?>
+    <section class="kb-front-edit" aria-label="前台编辑">
+        <?php if (!empty($_GET['kb_saved'])) : ?>
+            <div class="kb-front-edit-notice">已保存。</div>
+        <?php endif; ?>
+        <details <?php echo $is_open ? 'open' : ''; ?>>
+            <summary>编辑标题和正文</summary>
+            <form class="kb-front-edit-form" method="post" action="<?php echo esc_url($form_action); ?>">
+                <input type="hidden" name="home_kb_inline_edit_action" value="save">
+                <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) $post_id); ?>">
+                <?php wp_nonce_field('home_kb_inline_edit_' . $post_id, 'home_kb_inline_edit_nonce'); ?>
+                <label class="kb-field">
+                    <span>标题</span>
+                    <input type="text" name="home_kb_inline_title" value="<?php echo esc_attr($post->post_title); ?>" maxlength="180" required>
+                </label>
+                <div class="kb-field">
+                    <span>正文</span>
+                    <?php
+                    wp_editor($post->post_content, 'home_kb_inline_content_' . $post_id, [
+                        'textarea_name' => 'home_kb_inline_content',
+                        'textarea_rows' => 14,
+                        'editor_height' => 360,
+                        'media_buttons' => current_user_can('upload_files'),
+                        'teeny' => false,
+                        'quicktags' => true,
+                    ]);
+                    ?>
+                </div>
+                <p class="kb-form-note"><strong>前台直接保存：</strong>这里会直接更新当前文章，不进入 WordPress 后台。</p>
+                <div class="kb-form-actions">
+                    <button type="submit">保存到当前文章</button>
+                    <a href="<?php echo esc_url($cancel_url); ?>">取消</a>
+                </div>
+            </form>
+        </details>
+    </section>
+    <?php
+
+    return trim(ob_get_clean());
 }
 
 function home_workflow_kb_media_html($attachment_ids) {
@@ -1648,6 +1733,47 @@ function home_workflow_kb_delete_post_and_media($post_id) {
 add_action('template_redirect', function () {
     if (home_workflow_site_kind() !== 'kb' || ($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         return;
+    }
+
+    if (!empty($_POST['home_kb_inline_edit_action'])) {
+        $post_id = isset($_POST['home_kb_post_id']) ? absint($_POST['home_kb_post_id']) : 0;
+        if (!$post_id || get_post_type($post_id) !== 'post') {
+            wp_die('文章不存在。', '文章不存在', ['response' => 404]);
+        }
+        if (get_post_status($post_id) === 'trash') {
+            wp_die('回收站中的文章需要先恢复再编辑。', '前台编辑失败', ['response' => 400]);
+        }
+        if (!current_user_can('edit_post', $post_id)) {
+            wp_die('你没有权限编辑这篇文章。', '权限不足', ['response' => 403]);
+        }
+
+        check_admin_referer('home_kb_inline_edit_' . $post_id, 'home_kb_inline_edit_nonce');
+
+        $title = isset($_POST['home_kb_inline_title'])
+            ? sanitize_text_field(wp_unslash($_POST['home_kb_inline_title']))
+            : '';
+        if ($title === '') {
+            wp_die('标题不能为空。', '前台编辑失败', ['response' => 400]);
+        }
+
+        $content = isset($_POST['home_kb_inline_content'])
+            ? (string) wp_unslash($_POST['home_kb_inline_content'])
+            : '';
+        if (!current_user_can('unfiltered_html')) {
+            $content = wp_kses_post($content);
+        }
+
+        $result = wp_update_post([
+            'ID' => $post_id,
+            'post_title' => $title,
+            'post_content' => $content,
+        ], true);
+        if (is_wp_error($result)) {
+            wp_die(esc_html($result->get_error_message()), '前台编辑失败', ['response' => 400]);
+        }
+
+        wp_safe_redirect(home_workflow_kb_frontend_edit_url($post_id, ['kb_saved' => '1']));
+        exit;
     }
 
     if (!empty($_POST['home_kb_new_post_action'])) {
@@ -2585,15 +2711,20 @@ add_shortcode('kb_archive_home', function () {
         : '';
     $category_id = isset($_GET['kb_category']) ? absint($_GET['kb_category']) : 0;
     $tag_id = isset($_GET['kb_tag']) ? absint($_GET['kb_tag']) : 0;
+    $status_filter = isset($_GET['kb_status']) ? sanitize_key(wp_unslash($_GET['kb_status'])) : '';
     $selected_category = $category_id ? get_category($category_id) : null;
     $selected_tag = $tag_id ? get_term($tag_id, 'post_tag') : null;
     $visible_statuses = home_workflow_kb_visible_statuses();
+    if (!in_array($status_filter, ['publish', 'draft', 'private'], true) || !in_array($status_filter, $visible_statuses, true)) {
+        $status_filter = '';
+    }
+    $query_statuses = $status_filter !== '' ? [$status_filter] : $visible_statuses;
     $posts_per_page = 8;
     $requested_page = isset($_GET['kb_page']) ? max(1, absint($_GET['kb_page'])) : 1;
 
     $base_query_args = [
         'post_type' => 'post',
-        'post_status' => $visible_statuses,
+        'post_status' => $query_statuses,
         'ignore_sticky_posts' => true,
     ];
     if ($search_query !== '') {
@@ -2691,6 +2822,7 @@ add_shortcode('kb_archive_home', function () {
     $active_filter_count += $search_query !== '' ? 1 : 0;
     $active_filter_count += $selected_category instanceof WP_Term ? 1 : 0;
     $active_filter_count += $selected_tag instanceof WP_Term ? 1 : 0;
+    $active_filter_count += $status_filter !== '' ? 1 : 0;
     $section_title = '最近更新';
     if ($search_query !== '') {
         $section_title = '搜索：' . $search_query;
@@ -2698,8 +2830,12 @@ add_shortcode('kb_archive_home', function () {
         $section_title = '分类：' . $selected_category->name;
     } elseif ($selected_tag instanceof WP_Term) {
         $section_title = '标签：' . $selected_tag->name;
+    } elseif ($status_filter === 'draft') {
+        $section_title = '草稿';
+    } elseif ($status_filter === 'private') {
+        $section_title = '私密资料';
     }
-    $make_filter_url = function (array $changes = []) use ($search_query, $category_id, $tag_id) {
+    $make_filter_url = function (array $changes = []) use ($search_query, $category_id, $tag_id, $status_filter) {
         $args = [];
         if ($search_query !== '') {
             $args['s'] = $search_query;
@@ -2709,6 +2845,9 @@ add_shortcode('kb_archive_home', function () {
         }
         if ($tag_id) {
             $args['kb_tag'] = (string) $tag_id;
+        }
+        if ($status_filter !== '') {
+            $args['kb_status'] = $status_filter;
         }
 
         foreach ($changes as $key => $value) {
@@ -2723,6 +2862,7 @@ add_shortcode('kb_archive_home', function () {
     };
     $new_view_url = home_workflow_kb_view_url('new', $category_id);
     $trash_view_url = home_workflow_kb_view_url('trash', $category_id);
+    $draft_view_url = add_query_arg('kb_status', 'draft', home_url('/'));
 
     ob_start();
     ?>
@@ -2734,6 +2874,8 @@ add_shortcode('kb_archive_home', function () {
             'search_active' => $search_query !== '',
             'new_url' => $new_view_url,
             'trash_url' => $trash_view_url,
+            'draft_url' => $draft_view_url,
+            'draft_active' => $status_filter === 'draft',
             'category_manager_url' => '#kb-category-manager',
             'category_url_callback' => function ($category) use ($make_filter_url) {
                 return $make_filter_url([
@@ -2781,6 +2923,9 @@ add_shortcode('kb_archive_home', function () {
                     <?php endif; ?>
                     <?php if ($selected_tag instanceof WP_Term) : ?>
                         <a href="<?php echo esc_url($make_filter_url(['kb_tag' => null])); ?>">标签：<?php echo esc_html($selected_tag->name); ?></a>
+                    <?php endif; ?>
+                    <?php if ($status_filter !== '') : ?>
+                        <a href="<?php echo esc_url($make_filter_url(['kb_status' => null])); ?>">状态：<?php echo esc_html($status_filter === 'draft' ? '草稿' : ($status_filter === 'private' ? '私密' : '已发布')); ?></a>
                     <?php endif; ?>
                     <a class="kb-reset-filter" href="<?php echo esc_url(home_url('/')); ?>">清除全部</a>
                 </div>
@@ -2888,6 +3033,7 @@ add_shortcode('kb_archive_home', function () {
                                             <a href="<?php echo esc_url($source_url); ?>" target="_blank" rel="noopener noreferrer">来源</a>
                                         <?php endif; ?>
                                         <?php if ($can_edit && current_user_can('edit_post', get_the_ID())) : ?>
+                                            <a href="<?php echo esc_url(home_workflow_kb_frontend_edit_url(get_the_ID())); ?>" target="_blank" rel="noopener noreferrer">编辑</a>
                                             <form class="kb-sticky-form" method="post" action="<?php echo esc_url(home_url('/')); ?>">
                                                 <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
                                                 <input type="hidden" name="home_kb_sticky_action" value="<?php echo is_sticky() ? 'unstick' : 'stick'; ?>">
@@ -3022,6 +3168,11 @@ add_shortcode('kb_archive_home', function () {
 add_filter('the_content', function ($content) {
     if (!is_singular('post')) {
         return $content;
+    }
+
+    $front_edit = home_workflow_kb_frontend_edit_controls(get_the_ID());
+    if ($front_edit !== '') {
+        $content = $front_edit . $content;
     }
 
     $share_tools = home_workflow_public_share_controls(get_the_ID());
