@@ -1,0 +1,23 @@
+<!-- wp:template-part {"slug":"header","tagName":"header"} /-->
+
+<!-- wp:group {"tagName":"main","layout":{"type":"constrained"}} -->
+<main class="wp-block-group" style="padding-top:2.4rem;padding-bottom:3rem">
+  <!-- wp:query {"query":{"perPage":10,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date"}} -->
+  <div class="wp-block-query">
+    <!-- wp:post-template -->
+      <!-- wp:post-title {"isLink":true,"fontSize":"x-large"} /-->
+      <!-- wp:post-date {"fontSize":"small"} /-->
+      <!-- wp:post-excerpt {"moreText":"继续阅读"} /-->
+      <!-- wp:post-terms {"term":"category","fontSize":"small"} /-->
+    <!-- /wp:post-template -->
+    <!-- wp:query-pagination {"layout":{"type":"flex","justifyContent":"space-between"}} -->
+      <!-- wp:query-pagination-previous /-->
+      <!-- wp:query-pagination-next /-->
+    <!-- /wp:query-pagination -->
+  </div>
+  <!-- /wp:query -->
+</main>
+<!-- /wp:group -->
+
+<!-- wp:template-part {"slug":"footer","tagName":"footer"} /-->
+

@@ -1,0 +1,20 @@
+name: home-wordpress-edge
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    env_file:
+      - .env.edge
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile.edge-kb:/etc/caddy/Caddyfile:ro
+      - edge_caddy_data:/data
+      - edge_caddy_config:/config
+
+volumes:
+  edge_caddy_data:
+  edge_caddy_config:

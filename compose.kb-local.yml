@@ -1,0 +1,87 @@
+name: personal-kb-local
+
+services:
+  kb-db-local:
+    image: mariadb:11.4
+    restart: unless-stopped
+    command:
+      - --transaction-isolation=READ-COMMITTED
+      - --binlog-format=ROW
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    env_file:
+      - .env.kb-local
+    environment:
+      MARIADB_ROOT_PASSWORD: ${KB_LOCAL_DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${KB_LOCAL_DB_NAME}
+      MARIADB_USER: ${KB_LOCAL_DB_USER}
+      MARIADB_PASSWORD: ${KB_LOCAL_DB_PASSWORD}
+    volumes:
+      - kb_local_db:/var/lib/mysql
+    networks:
+      - kb-local
+
+  kb-wordpress-local:
+    image: wordpress:php8.3-apache
+    restart: unless-stopped
+    depends_on:
+      kb-db-local:
+        condition: service_started
+    env_file:
+      - .env.kb-local
+    environment:
+      WORDPRESS_DB_HOST: kb-db-local:3306
+      WORDPRESS_DB_NAME: ${KB_LOCAL_DB_NAME}
+      WORDPRESS_DB_USER: ${KB_LOCAL_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${KB_LOCAL_DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '512M');
+        define('WP_ENVIRONMENT_TYPE', 'local');
+        define('WP_HOME', getenv('KB_LOCAL_URL'));
+        define('WP_SITEURL', getenv('KB_LOCAL_URL'));
+        define('DISALLOW_FILE_EDIT', true);
+    ports:
+      - "8080:80"
+    volumes:
+      - kb_local_wordpress:/var/www/html
+      - ./config/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ./themes/kanso-minimal:/var/www/html/wp-content/themes/kanso-minimal:ro
+      - ./mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+    networks:
+      - kb-local
+
+  kb-wpcli-local:
+    image: wordpress:cli-php8.3
+    user: "33:33"
+    profiles:
+      - tools
+    depends_on:
+      kb-db-local:
+        condition: service_started
+      kb-wordpress-local:
+        condition: service_started
+    env_file:
+      - .env.kb-local
+    environment:
+      WORDPRESS_DB_HOST: kb-db-local:3306
+      WORDPRESS_DB_NAME: ${KB_LOCAL_DB_NAME}
+      WORDPRESS_DB_USER: ${KB_LOCAL_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${KB_LOCAL_DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_ENVIRONMENT_TYPE', 'local');
+        define('WP_HOME', getenv('KB_LOCAL_URL'));
+        define('WP_SITEURL', getenv('KB_LOCAL_URL'));
+    volumes:
+      - kb_local_wordpress:/var/www/html
+      - ./themes/kanso-minimal:/var/www/html/wp-content/themes/kanso-minimal:ro
+      - ./mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+    networks:
+      - kb-local
+
+networks:
+  kb-local:
+
+volumes:
+  kb_local_db:
+  kb_local_wordpress:

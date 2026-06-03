@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+backups/
+incoming/
+prepared-media/
+private/
+themes/kanso-minimal/kb-videos/
+*.log
+.DS_Store
+._*
+__MACOSX/
+*.shortcut
+__pycache__/
+*.py[cod]

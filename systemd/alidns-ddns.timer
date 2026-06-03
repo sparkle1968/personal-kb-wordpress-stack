@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Aliyun DDNS updater every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=alidns-ddns.service
+
+[Install]
+WantedBy=timers.target
+

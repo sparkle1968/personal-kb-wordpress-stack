@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup Cloudflare Tunnel personal knowledge base WordPress database and uploads
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/home-wordpress
+Environment=KB_COMPOSE_FILE=compose.kb-cloudflare.yml
+ExecStart=/opt/home-wordpress/scripts/backup-kb.sh

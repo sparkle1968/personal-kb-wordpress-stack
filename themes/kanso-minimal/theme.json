@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/theme.json",
+  "version": 3,
+  "settings": {
+    "appearanceTools": true,
+    "layout": {
+      "contentSize": "760px",
+      "wideSize": "1120px"
+    },
+    "color": {
+      "palette": [
+        { "slug": "sumi", "color": "#2f2b27", "name": "Sumi" },
+        { "slug": "ink", "color": "#4d4740", "name": "Ink" },
+        { "slug": "paper", "color": "#fdfbf6", "name": "Paper" },
+        { "slug": "washi", "color": "#f7f3ea", "name": "Washi" },
+        { "slug": "cedar", "color": "#9b7558", "name": "Cedar" },
+        { "slug": "moss", "color": "#6f7f68", "name": "Moss" },
+        { "slug": "mist", "color": "#d9d4c8", "name": "Mist" }
+      ]
+    },
+    "spacing": {
+      "units": ["px", "rem", "%", "vw", "vh"]
+    },
+    "typography": {
+      "fontFamilies": [
+        {
+          "fontFamily": "'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif",
+          "name": "System Sans",
+          "slug": "system-sans"
+        },
+        {
+          "fontFamily": "Georgia, 'Times New Roman', 'Songti SC', serif",
+          "name": "Serif",
+          "slug": "serif"
+        }
+      ],
+      "fontSizes": [
+        { "slug": "small", "size": "0.92rem", "name": "Small" },
+        { "slug": "medium", "size": "1rem", "name": "Medium" },
+        { "slug": "large", "size": "1.45rem", "name": "Large" },
+        { "slug": "x-large", "size": "2.2rem", "name": "Extra Large" }
+      ]
+    }
+  },
+  "styles": {
+    "color": {
+      "background": "#fdfbf6",
+      "text": "#2f2b27"
+    },
+    "elements": {
+      "button": {
+        "border": {
+          "radius": "4px"
+        },
+        "color": {
+          "background": "#2f2b27",
+          "text": "#fdfbf6"
+        }
+      },
+      "link": {
+        "color": {
+          "text": "#6f7f68"
+        }
+      }
+    },
+    "spacing": {
+      "blockGap": "1.4rem",
+      "padding": {
+        "left": "clamp(1rem, 4vw, 2rem)",
+        "right": "clamp(1rem, 4vw, 2rem)"
+      }
+    },
+    "typography": {
+      "fontFamily": "var:preset|font-family|system-sans",
+      "fontSize": "1rem",
+      "lineHeight": "1.78"
+    }
+  },
+  "templateParts": [
+    { "area": "header", "name": "header", "title": "Header" },
+    { "area": "footer", "name": "footer", "title": "Footer" }
+  ]
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Cloudflare Tunnel personal knowledge base WordPress backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=home-wordpress-kb-cloudflare-backup.service
+
+[Install]
+WantedBy=timers.target

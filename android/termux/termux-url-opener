@@ -1,0 +1,119 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+export PATH="/data/data/com.termux/files/usr/bin:/system/bin:${PATH:-}"
+
+KB_HOST="${KB_HOST:-}"
+KB_PORT="${KB_PORT:-22}"
+KB_USER="${KB_USER:-}"
+KB_KEY="${KB_KEY:-$HOME/.ssh/kb-android-publish-ed25519}"
+KB_REMOTE_PUBLISH="${KB_REMOTE_PUBLISH:-/opt/home-wordpress/scripts/kb-mobile-publish.py}"
+KB_DEFAULT_CATEGORY="${KB_DEFAULT_CATEGORY:-}"
+KB_AUTO_CLOSE="${KB_AUTO_CLOSE:-1}"
+KB_CLOSE_DELAY="${KB_CLOSE_DELAY:-4}"
+
+toast_only() {
+  if command -v termux-toast >/dev/null 2>&1; then
+    termux-toast "$*"
+  fi
+}
+
+finish_session() {
+  local status="$1"
+
+  if [[ "$KB_AUTO_CLOSE" == "1" ]]; then
+    printf '\n%s 秒后返回桌面并关闭本次 Termux 会话。\n' "$KB_CLOSE_DELAY"
+    sleep "$KB_CLOSE_DELAY"
+    am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
+  fi
+
+  exit "$status"
+}
+
+fail() {
+  local message="知识库发布失败：$*"
+  toast_only "$message"
+  printf '\n[失败] %s\n' "$message" >&2
+  finish_session 1
+}
+
+shared_input="${*:-}"
+if [[ -z "$shared_input" ]]; then
+  shared_input="$(timeout 5 cat 2>/dev/null || true)"
+fi
+shared_input="$(printf '%s' "$shared_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+[[ -n "$shared_input" ]] || fail "没有收到分享链接"
+[[ -f "$KB_KEY" ]] || fail "缺少 SSH key：$KB_KEY"
+[[ -n "$KB_HOST" ]] || fail "缺少 KB_HOST 配置"
+[[ -n "$KB_USER" ]] || fail "缺少 KB_USER 配置"
+
+ssh_opts=(
+  -i "$KB_KEY"
+  -p "$KB_PORT"
+  -o BatchMode=yes
+  -o ConnectTimeout=15
+  -o StrictHostKeyChecking=accept-new
+)
+
+categories_output="$(
+  ssh "${ssh_opts[@]}" "${KB_USER}@${KB_HOST}" \
+    "python3 '$KB_REMOTE_PUBLISH' --list-categories"
+)" || fail "无法读取知识库分类，请检查 WireGuard/VPN 和 SSH"
+
+mapfile -t categories < <(printf '%s\n' "$categories_output" | sed '/^[[:space:]]*$/d')
+[[ "${#categories[@]}" -gt 0 ]] || fail "服务器没有返回可用分类"
+
+category=""
+if [[ -n "$KB_DEFAULT_CATEGORY" ]]; then
+  for item in "${categories[@]}"; do
+    if [[ "$item" == "$KB_DEFAULT_CATEGORY" ]]; then
+      category="$item"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$category" ]]; then
+  printf '\n选择知识库分类：\n'
+  select item in "${categories[@]}"; do
+    if [[ -n "${item:-}" ]]; then
+      category="$item"
+      break
+    fi
+    printf '请输入列表里的数字。\n'
+  done
+fi
+
+input_b64="$(printf '%s' "$shared_input" | base64 | tr -d '\n')"
+category_b64="$(printf '%s' "$category" | base64 | tr -d '\n')"
+
+result="$(
+  ssh "${ssh_opts[@]}" "${KB_USER}@${KB_HOST}" \
+    "KB_INPUT_B64='$input_b64' KB_CATEGORY_B64='$category_b64' KB_REMOTE_PUBLISH='$KB_REMOTE_PUBLISH' python3 -" <<'PY'
+import base64
+import os
+import subprocess
+import sys
+
+shared_input = base64.b64decode(os.environ["KB_INPUT_B64"]).decode("utf-8")
+category = base64.b64decode(os.environ["KB_CATEGORY_B64"]).decode("utf-8")
+script = os.environ.get("KB_REMOTE_PUBLISH", "/opt/home-wordpress/scripts/kb-mobile-publish.py")
+
+completed = subprocess.run(
+    ["python3", script, "--url", shared_input, "--category", category],
+    text=True,
+    capture_output=True,
+    check=False,
+)
+if completed.stdout:
+    print(completed.stdout.strip())
+if completed.stderr:
+    print(completed.stderr.strip(), file=sys.stderr)
+raise SystemExit(completed.returncode)
+PY
+)" || fail "服务器发布失败"
+
+printf '\n%s\n' "$result"
+toast_only "知识库发布成功"
+printf '\n[成功] 知识库发布完成，分类：%s\n' "$category"
+finish_session 0

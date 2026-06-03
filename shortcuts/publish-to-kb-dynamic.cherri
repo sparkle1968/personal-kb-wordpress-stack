@@ -1,0 +1,48 @@
+#define name 发布到个人知识库
+#define color yellow
+#define glyph archive
+#define inputs text, url
+#define from sharesheet
+#define noinput getclipboard
+
+#include 'actions/network'
+#include 'actions/text'
+
+const host = "YOUR_SERVER_HOST"
+const port = "22"
+const user = "YOUR_SSH_USER"
+
+@sharedInput = getText(ShortcutInput)
+
+@categoriesOutput = runSSHScript(
+  "python3 /opt/home-wordpress/scripts/kb-mobile-publish.py --list-categories",
+  nil,
+  host,
+  port,
+  user,
+  "SSH Key",
+  ""
+)
+
+@categories = splitText(@categoriesOutput, "\n")
+@category = chooseFromList(@categories, "选择知识库分类")
+
+const publishScript = "set -e
+KB_CATEGORY=\"{category}\"
+KB_INPUT=\"$(timeout 5 cat || true)\"
+python3 /opt/home-wordpress/scripts/kb-mobile-publish.py \\
+  --url \"$KB_INPUT\" \\
+  --category \"$KB_CATEGORY\"
+"
+
+@publishResult = runSSHScript(
+  publishScript,
+  @sharedInput,
+  host,
+  port,
+  user,
+  "SSH Key",
+  ""
+)
+
+show(@publishResult)

@@ -1,0 +1,108 @@
+name: home-wordpress
+
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: caddy/Dockerfile.alidns
+    restart: unless-stopped
+    depends_on:
+      wordpress-kb:
+        condition: service_started
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile.kb-altports:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public
+
+  db-kb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    command:
+      - --transaction-isolation=READ-COMMITTED
+      - --binlog-format=ROW
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    env_file:
+      - .env
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${KB_DB_NAME}
+      MARIADB_USER: ${KB_DB_USER}
+      MARIADB_PASSWORD: ${KB_DB_PASSWORD}
+    volumes:
+      - db_kb:/var/lib/mysql
+    networks:
+      - kb
+
+  wordpress-kb:
+    image: wordpress:php8.3-apache
+    restart: unless-stopped
+    depends_on:
+      db-kb:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      WORDPRESS_DB_HOST: db-kb:3306
+      WORDPRESS_DB_NAME: ${KB_DB_NAME}
+      WORDPRESS_DB_USER: ${KB_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${KB_DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '512M');
+        define('FORCE_SSL_ADMIN', true);
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+          $$_SERVER['HTTPS'] = 'on';
+        }
+        define('DISALLOW_FILE_EDIT', true);
+    volumes:
+      - wordpress_kb:/var/www/html
+      - ./config/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ./themes/kanso-minimal:/var/www/html/wp-content/themes/kanso-minimal:ro
+      - ./mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+    networks:
+      - public
+      - kb
+
+  wpcli-kb:
+    image: wordpress:cli-php8.3
+    user: "33:33"
+    profiles:
+      - tools
+    depends_on:
+      db-kb:
+        condition: service_started
+      wordpress-kb:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      WORDPRESS_DB_HOST: db-kb:3306
+      WORDPRESS_DB_NAME: ${KB_DB_NAME}
+      WORDPRESS_DB_USER: ${KB_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${KB_DB_PASSWORD}
+    volumes:
+      - wordpress_kb:/var/www/html
+      - ./themes/kanso-minimal:/var/www/html/wp-content/themes/kanso-minimal:ro
+      - ./mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+    networks:
+      - public
+      - kb
+
+networks:
+  public:
+  kb:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  db_kb:
+  wordpress_kb:

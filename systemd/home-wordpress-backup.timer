@@ -1,0 +1,11 @@
+[Unit]
+Description=Run home WordPress backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=home-wordpress-backup.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run relayed personal knowledge base WordPress backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=home-wordpress-kb-relay-backup.service
+
+[Install]
+WantedBy=timers.target

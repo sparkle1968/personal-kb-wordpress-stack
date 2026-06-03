@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Aliyun DNS records for home WordPress
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/home-wordpress
+EnvironmentFile=/opt/home-wordpress/.env
+ExecStart=/usr/bin/python3 /opt/home-wordpress/scripts/ddns-alidns.py
+

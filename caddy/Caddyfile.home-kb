@@ -1,0 +1,21 @@
+:80 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	respond /xmlrpc.php 404
+	respond /wp-content/uploads/private-archive/* 404
+
+	reverse_proxy wordpress-kb:80 {
+		header_up Host {$DOMAIN_KB}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {$DOMAIN_KB}
+		header_up X-Real-IP {remote_host}
+	}
+}

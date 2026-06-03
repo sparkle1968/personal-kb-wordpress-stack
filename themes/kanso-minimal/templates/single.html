@@ -1,0 +1,27 @@
+<!-- wp:template-part {"slug":"header","tagName":"header"} /-->
+
+<!-- wp:group {"tagName":"main","className":"kb-reader","layout":{"type":"constrained"}} -->
+<main class="wp-block-group kb-reader">
+  <!-- wp:paragraph {"className":"kb-reader-back"} -->
+  <p class="kb-reader-back"><a href="/">返回知识库</a></p>
+  <!-- /wp:paragraph -->
+
+  <!-- wp:group {"tagName":"article","className":"kb-reader-article","layout":{"type":"constrained"}} -->
+  <article class="wp-block-group kb-reader-article">
+    <!-- wp:group {"className":"kb-reader-head","layout":{"type":"constrained"}} -->
+    <div class="wp-block-group kb-reader-head">
+      <!-- wp:post-terms {"term":"category","className":"kb-reader-terms","fontSize":"small"} /-->
+      <!-- wp:post-title {"level":1,"fontSize":"x-large"} /-->
+      <!-- wp:post-date {"format":"Y.m.d","fontSize":"small"} /-->
+    </div>
+    <!-- /wp:group -->
+
+    <!-- wp:post-featured-image {"aspectRatio":"16/9"} /-->
+    <!-- wp:post-content {"layout":{"type":"constrained"}} /-->
+    <!-- wp:post-terms {"term":"post_tag","className":"kb-reader-tags","fontSize":"small"} /-->
+  </article>
+  <!-- /wp:group -->
+</main>
+<!-- /wp:group -->
+
+<!-- wp:template-part {"slug":"footer","tagName":"footer"} /-->
