@@ -37,9 +37,9 @@ http://localhost:8080/wp-login.php
 
 ## 效果预览
 
-![个人知识库首页](examples/media/personal-kb-home-final.png)
+![新版登录页](examples/media/personal-kb-login-final.png)
 
-![登录页](examples/media/personal-kb-login-final.png)
+![site-admin 管理界面](examples/media/personal-kb-site-admin-final.png)
 
 ## 适合 / 不适合
 
