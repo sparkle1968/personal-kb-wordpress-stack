@@ -126,7 +126,7 @@ personal-kb-wordpress-stack
 
 ```markdown
 主仓库：<https://github.com/sparkle1968/personal-kb-wordpress-stack>
-国内镜像：导入 Gitee 后补充
+国内镜像：<https://gitee.com/lixin_gong/personal-kb-wordpress-stack>
 ```
 
 ## 目录
