@@ -12,14 +12,22 @@ download_dir="/sdcard/Download"
 home_dir="${HOME:-/data/data/com.termux/files/home}"
 bin_dir="$home_dir/bin"
 ssh_dir="$home_dir/.ssh"
+config_dir="$home_dir/.config"
+config_file="$config_dir/kb-android-share.env"
 url_opener_src="$download_dir/termux-url-opener"
+file_editor_src="$download_dir/termux-file-editor"
 key_src="$download_dir/$KB_KEY_NAME"
 pub_src="$download_dir/$KB_KEY_NAME.pub"
 url_opener_dst="$bin_dir/termux-url-opener"
+file_editor_dst="$bin_dir/termux-file-editor"
 key_dst="$ssh_dir/$KB_KEY_NAME"
 
 say() {
   printf '%s\n' "$*"
+}
+
+quote_env() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
 need_file() {
@@ -53,15 +61,19 @@ if ! command -v ssh >/dev/null 2>&1; then
 fi
 
 need_file "$url_opener_src"
+need_file "$file_editor_src"
 if [[ ! -f "$key_src" && ! -f "$key_dst" ]]; then
   need_file "$key_src"
 fi
 
-mkdir -p "$bin_dir" "$ssh_dir"
+mkdir -p "$bin_dir" "$ssh_dir" "$config_dir"
 chmod 700 "$ssh_dir"
+chmod 700 "$config_dir"
 
 cp "$url_opener_src" "$url_opener_dst"
 chmod 700 "$url_opener_dst"
+cp "$file_editor_src" "$file_editor_dst"
+chmod 700 "$file_editor_dst"
 
 if [[ -f "$key_src" ]]; then
   cp "$key_src" "$key_dst"
@@ -75,13 +87,27 @@ if [[ -f "$pub_src" ]]; then
   chmod 644 "$key_dst.pub"
 fi
 
+{
+  printf 'KB_HOST=%s\n' "$(quote_env "$KB_HOST")"
+  printf 'KB_PORT=%s\n' "$(quote_env "$KB_PORT")"
+  printf 'KB_USER=%s\n' "$(quote_env "$KB_USER")"
+  printf 'KB_KEY=%s\n' "$(quote_env "$key_dst")"
+  printf 'KB_DEFAULT_STATUS=%s\n' "$(quote_env "${KB_DEFAULT_STATUS:-publish}")"
+  if [[ -n "${KB_DEFAULT_CATEGORY:-}" ]]; then
+    printf 'KB_DEFAULT_CATEGORY=%s\n' "$(quote_env "$KB_DEFAULT_CATEGORY")"
+  fi
+} > "$config_file"
+chmod 600 "$config_file"
+
 ssh-keyscan -p "$KB_PORT" "$KB_HOST" >> "$ssh_dir/known_hosts" 2>/dev/null || true
 chmod 600 "$ssh_dir/known_hosts" 2>/dev/null || true
 
 rm -f "$key_src" "$pub_src"
 
 say "安装完成。"
-say "分享入口：$url_opener_dst"
+say "网页分享入口：$url_opener_dst"
+say "视频分享入口：$file_editor_dst"
+say "配置文件：$config_file"
 say "SSH key：$key_dst"
 say "测试分类读取："
 ssh -i "$key_dst" -p "$KB_PORT" \
@@ -90,3 +116,11 @@ ssh -i "$key_dst" -p "$KB_PORT" \
   -o StrictHostKeyChecking=accept-new \
   "$KB_USER@$KB_HOST" \
   "python3 /opt/home-wordpress/scripts/kb-mobile-publish.py --list-categories"
+
+say "测试视频分类读取："
+ssh -i "$key_dst" -p "$KB_PORT" \
+  -o BatchMode=yes \
+  -o ConnectTimeout=15 \
+  -o StrictHostKeyChecking=accept-new \
+  "$KB_USER@$KB_HOST" \
+  "python3 /opt/home-wordpress/scripts/kb-mobile-video-publish.py --list-categories"

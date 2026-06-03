@@ -1,0 +1,160 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+export PATH="/data/data/com.termux/files/usr/bin:/system/bin:${PATH:-}"
+
+KB_CONFIG_FILE="${KB_CONFIG_FILE:-$HOME/.config/kb-android-share.env}"
+if [[ -f "$KB_CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$KB_CONFIG_FILE"
+fi
+
+KB_HOST="${KB_HOST:-}"
+KB_PORT="${KB_PORT:-22}"
+KB_USER="${KB_USER:-}"
+KB_KEY="${KB_KEY:-$HOME/.ssh/kb-android-publish-ed25519}"
+KB_REMOTE_VIDEO_PUBLISH="${KB_REMOTE_VIDEO_PUBLISH:-/opt/home-wordpress/scripts/kb-mobile-video-publish.py}"
+KB_DEFAULT_CATEGORY="${KB_DEFAULT_CATEGORY:-}"
+KB_DEFAULT_STATUS="${KB_DEFAULT_STATUS:-publish}"
+KB_AUTO_CLOSE="${KB_AUTO_CLOSE:-1}"
+KB_CLOSE_DELAY="${KB_CLOSE_DELAY:-4}"
+
+toast_only() {
+  if command -v termux-toast >/dev/null 2>&1; then
+    termux-toast "$*"
+  fi
+}
+
+finish_session() {
+  local status="$1"
+
+  if [[ "$KB_AUTO_CLOSE" == "1" ]]; then
+    printf '\n%s 秒后返回桌面并关闭本次 Termux 会话。\n' "$KB_CLOSE_DELAY"
+    sleep "$KB_CLOSE_DELAY"
+    am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
+  fi
+
+  exit "$status"
+}
+
+fail() {
+  local message="知识库视频发布失败：$*"
+  toast_only "$message"
+  printf '\n[失败] %s\n' "$message" >&2
+  finish_session 1
+}
+
+quote_sh() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+clean_title() {
+  local value="$1"
+  value="${value##*/}"
+  value="${value%.*}"
+  value="$(printf '%s' "$value" | sed -e 's/[_-][0-9][0-9]*p$//' -e 's/[._-]/ /g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  printf '%s' "${value:-视频资料}"
+}
+
+shared_file="${1:-}"
+[[ -n "$shared_file" ]] || fail "没有收到视频文件路径"
+[[ -f "$shared_file" ]] || fail "视频文件不存在：$shared_file"
+[[ -r "$shared_file" ]] || fail "视频文件不可读：$shared_file"
+[[ -f "$KB_KEY" ]] || fail "缺少 SSH key：$KB_KEY"
+[[ -n "$KB_HOST" ]] || fail "缺少 KB_HOST 配置"
+[[ -n "$KB_USER" ]] || fail "缺少 KB_USER 配置"
+
+filename="$(basename "$shared_file")"
+lower_name="$(printf '%s' "$filename" | tr '[:upper:]' '[:lower:]')"
+case "$lower_name" in
+  *.mp4|*.m4v|*.mov|*.webm) ;;
+  *) fail "只支持 mp4、m4v、mov、webm：$filename" ;;
+esac
+
+ssh_opts=(
+  -i "$KB_KEY"
+  -p "$KB_PORT"
+  -o BatchMode=yes
+  -o ConnectTimeout=15
+  -o StrictHostKeyChecking=accept-new
+)
+
+categories_output="$(
+  ssh "${ssh_opts[@]}" "${KB_USER}@${KB_HOST}" \
+    "python3 '$KB_REMOTE_VIDEO_PUBLISH' --list-categories"
+)" || fail "无法读取知识库分类，请检查 WireGuard/VPN 和 SSH"
+
+mapfile -t categories < <(printf '%s\n' "$categories_output" | sed '/^[[:space:]]*$/d')
+[[ "${#categories[@]}" -gt 0 ]] || fail "服务器没有返回可用分类"
+
+category=""
+if [[ -n "$KB_DEFAULT_CATEGORY" ]]; then
+  for item in "${categories[@]}"; do
+    if [[ "$item" == "$KB_DEFAULT_CATEGORY" ]]; then
+      category="$item"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$category" ]]; then
+  printf '\n选择知识库分类：\n'
+  select item in "${categories[@]}"; do
+    if [[ -n "${item:-}" ]]; then
+      category="$item"
+      break
+    fi
+    printf '请输入列表里的数字。\n'
+  done
+fi
+
+default_title="$(clean_title "$filename")"
+printf '\n文章标题 [%s]：' "$default_title"
+IFS= read -r title || true
+title="${title:-$default_title}"
+[[ -n "$title" ]] || fail "标题不能为空"
+
+printf '正文说明，可留空：'
+IFS= read -r body || true
+
+status="$KB_DEFAULT_STATUS"
+case "$status" in
+  publish|draft|private) ;;
+  *) fail "KB_DEFAULT_STATUS 只能是 publish、draft 或 private" ;;
+esac
+
+title_b64="$(b64 "$title")"
+category_b64="$(b64 "$category")"
+body_b64="$(b64 "$body")"
+filename_b64="$(b64 "$filename")"
+
+remote_py='import base64, os, subprocess, sys
+def d(name):
+    return base64.b64decode(os.environ.get(name, "")).decode("utf-8")
+args = [
+    "python3",
+    os.environ.get("KB_REMOTE_VIDEO_PUBLISH", "/opt/home-wordpress/scripts/kb-mobile-video-publish.py"),
+    "--title", d("KB_TITLE_B64"),
+    "--category", d("KB_CATEGORY_B64"),
+    "--body", d("KB_BODY_B64"),
+    "--filename", d("KB_FILENAME_B64"),
+    "--status", os.environ.get("KB_STATUS", "publish"),
+]
+raise SystemExit(subprocess.call(args))
+'
+
+remote_cmd="KB_TITLE_B64=$(quote_sh "$title_b64") KB_CATEGORY_B64=$(quote_sh "$category_b64") KB_BODY_B64=$(quote_sh "$body_b64") KB_FILENAME_B64=$(quote_sh "$filename_b64") KB_STATUS=$(quote_sh "$status") KB_REMOTE_VIDEO_PUBLISH=$(quote_sh "$KB_REMOTE_VIDEO_PUBLISH") python3 -c $(quote_sh "$remote_py")"
+
+printf '\n开始上传视频：%s\n' "$filename"
+result="$(
+  ssh "${ssh_opts[@]}" "${KB_USER}@${KB_HOST}" "$remote_cmd" < "$shared_file"
+)" || fail "服务器发布视频失败"
+
+printf '\n%s\n' "$result"
+toast_only "知识库视频发布成功"
+printf '\n[成功] 视频已发布，分类：%s\n' "$category"
+finish_session 0

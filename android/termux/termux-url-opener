@@ -3,6 +3,12 @@ set -euo pipefail
 
 export PATH="/data/data/com.termux/files/usr/bin:/system/bin:${PATH:-}"
 
+KB_CONFIG_FILE="${KB_CONFIG_FILE:-$HOME/.config/kb-android-share.env}"
+if [[ -f "$KB_CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$KB_CONFIG_FILE"
+fi
+
 KB_HOST="${KB_HOST:-}"
 KB_PORT="${KB_PORT:-22}"
 KB_USER="${KB_USER:-}"
