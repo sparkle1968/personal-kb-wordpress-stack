@@ -277,6 +277,32 @@ def run_importer(cmd: list[str]) -> dict[str, Any]:
         return {"output": output}
 
 
+def enable_public_share(importer, args: argparse.Namespace, result: dict[str, Any]) -> str:
+    post_id = result.get("id")
+    if not post_id or result.get("status") != "publish":
+        return ""
+
+    try:
+        importer.load_env(Path(env_path(args.env_file)))
+        base_url, user, password = importer.site_config(args.site)
+        if not user or not password:
+            return ""
+        auth = importer.auth_header(user, password)
+        response = importer.api_call(
+            base_url,
+            auth,
+            "POST",
+            f"/wp-json/home-kb/v1/public-share/{int(post_id)}",
+            {},
+        )
+        share_url = str(response.get("share_url") or "").strip()
+        log_event("public_share_enabled", post_id=post_id, share_url=share_url)
+        return share_url
+    except Exception as exc:
+        log_event("public_share_failed", post_id=post_id, error=str(exc))
+        return ""
+
+
 def main() -> int:
     args = build_parser().parse_args()
     log_event(
@@ -399,10 +425,13 @@ def main() -> int:
         "ok": True,
         "id": result.get("id"),
         "status": result.get("status"),
-        "link": result.get("link"),
+        "link": enable_public_share(importer, args, result) or result.get("link"),
+        "share_link": "",
+        "permalink": result.get("link"),
         "category": categories,
         "tags": tags,
     }
+    summary["share_link"] = summary["link"] if summary["link"] != summary["permalink"] else ""
     log_event("done", summary=summary)
     if args.json_output:
         print(json.dumps(summary, ensure_ascii=False, indent=2))

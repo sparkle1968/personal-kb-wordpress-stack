@@ -632,6 +632,26 @@ add_action('rest_api_init', function () {
             ]);
         },
     ]);
+
+    register_rest_route('home-kb/v1', '/public-share/(?P<post_id>\d+)', [
+        'methods' => WP_REST_Server::CREATABLE,
+        'permission_callback' => function (WP_REST_Request $request) {
+            return home_workflow_site_kind() === 'kb'
+                && home_workflow_current_user_can_share_post(absint($request['post_id']));
+        },
+        'callback' => function (WP_REST_Request $request) {
+            $post_id = absint($request['post_id']);
+            update_post_meta($post_id, 'home_public_share_enabled', '1');
+            $share_url = home_workflow_public_share_url($post_id);
+
+            return rest_ensure_response([
+                'id' => $post_id,
+                'enabled' => true,
+                'share_url' => $share_url,
+                'permalink' => get_permalink($post_id),
+            ]);
+        },
+    ]);
 });
 
 add_action('add_meta_boxes', function () {

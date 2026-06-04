@@ -117,6 +117,29 @@ def load_wordpress_categories(importer, site: str, env_file: Path) -> list[str]:
     return categories
 
 
+def enable_public_share(importer, site: str, env_file: Path, post: dict[str, Any]) -> str:
+    post_id = post.get("id")
+    if not post_id or post.get("status") != "publish":
+        return ""
+
+    try:
+        importer.load_env(env_file)
+        base_url, user, password = importer.site_config(site)
+        if not user or not password:
+            return ""
+        auth = importer.auth_header(user, password)
+        response = importer.api_call(
+            base_url,
+            auth,
+            "POST",
+            f"/wp-json/home-kb/v1/public-share/{int(post_id)}",
+            {},
+        )
+        return str(response.get("share_url") or "").strip()
+    except Exception:
+        return ""
+
+
 def safe_filename(value: str, fallback: str = "mobile-video.mp4") -> str:
     name = Path(value or fallback).name
     name = re.sub(r"[\x00-\x1f\x7f]+", "", name).strip()
@@ -275,10 +298,15 @@ def main() -> int:
             pass
         raise
 
+    permalink = post.get("link")
+    share_link = enable_public_share(importer, args.site, env_file, post)
+
     print(json.dumps({
         "ok": True,
         "id": post["id"],
-        "link": post.get("link"),
+        "link": share_link or permalink,
+        "share_link": share_link,
+        "permalink": permalink,
         "edit": base_url.rstrip("/") + f"/wp-admin/post.php?post={post['id']}&action=edit",
         "status": post.get("status"),
         "category": categories,
