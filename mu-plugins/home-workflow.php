@@ -1286,6 +1286,8 @@ function home_workflow_kb_sidebar_critical_css() {
         . '.kb-sidebar .kb-side-title,.kb-sidebar .kb-side-nav,.kb-sidebar .kb-side-block{flex:0 0 auto!important;}'
         . '.kb-sidebar .kb-side-nav{display:flex!important;flex-direction:column!important;justify-content:flex-start!important;align-content:flex-start!important;gap:4px!important;margin:26px 0 20px!important;height:auto!important;min-height:0!important;}'
         . '.kb-sidebar .kb-side-nav a{display:flex!important;align-items:center!important;flex:0 0 30px!important;height:30px!important;min-height:30px!important;max-height:30px!important;margin:0!important;padding:0 9px!important;font-family:var(--kanso-sans)!important;font-size:13px!important;font-weight:600!important;line-height:1.2!important;letter-spacing:0!important;transform:none!important;}'
+        . '.kb-sidebar .kb-side-nav a.kb-nav-short-label{font-size:14px!important;font-weight:650!important;}'
+        . '.kb-sidebar .kb-side-nav a.kb-nav-medium-label{font-size:13.5px!important;font-weight:625!important;}'
         . '.kb-sidebar .kb-side-block{display:flex!important;flex-direction:column!important;justify-content:flex-start!important;align-content:flex-start!important;gap:4px!important;padding-top:16px!important;height:auto!important;min-height:0!important;}'
         . '.kb-sidebar .kb-side-block>a{display:flex!important;align-items:center!important;flex:0 0 29px!important;height:29px!important;min-height:29px!important;max-height:29px!important;margin:0!important;padding:0 9px!important;font-size:13px!important;font-weight:590!important;line-height:1.2!important;}'
         . '.kb-sidebar .kb-side-block>span{margin:0 0 4px!important;font-size:12px!important;font-weight:700!important;}'
@@ -1294,8 +1296,20 @@ function home_workflow_kb_sidebar_critical_css() {
         . '</style>';
 }
 
+function home_workflow_kb_nav_label_class($label) {
+    $length = preg_match_all('/./u', (string) $label);
+    if ($length <= 2) {
+        return 'kb-nav-short-label';
+    }
+    if ($length === 3) {
+        return 'kb-nav-medium-label';
+    }
+
+    return 'kb-nav-long-label';
+}
+
 function home_workflow_kb_nav_link($url, $label, $is_active = false, $extra_attrs = '') {
-    $classes = ['kb-nav-item'];
+    $classes = ['kb-nav-item', home_workflow_kb_nav_label_class($label)];
     if ($is_active) {
         $classes[] = 'is-active';
     }
