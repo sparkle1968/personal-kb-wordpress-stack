@@ -3961,19 +3961,77 @@ add_action('login_enqueue_scripts', function () {
             }
         }
 
+        @media (min-width: 1181px) and (max-width: 1366px) and (max-height: 900px) {
+            body.login.home-login-kb {
+                grid-template-columns: minmax(0, 560px) minmax(300px, 340px);
+                gap: clamp(24px, 3vw, 36px);
+                padding: clamp(22px, 3vw, 36px);
+            }
+
+            .login #login {
+                width: min(340px, 100%) !important;
+                max-width: min(340px, 100%) !important;
+                padding: 28px 28px 24px;
+            }
+
+            .home-login-intro {
+                margin-bottom: 16px;
+            }
+
+            .home-login-intro strong {
+                font-size: 28px;
+            }
+
+            .home-login-intro p {
+                margin-top: 12px;
+                font-size: 12px;
+                line-height: 1.55;
+            }
+
+            .login #login form p,
+            .login .user-pass-wrap {
+                margin-bottom: 8px;
+            }
+
+            .login .user-pass-wrap label {
+                margin-bottom: 4px;
+            }
+
+            .login form .input,
+            .login input[type="text"] {
+                height: 34px;
+                min-height: 34px;
+                line-height: 34px;
+                font-size: 13px;
+                padding: 0 10px;
+            }
+
+            .login .button.wp-hide-pw {
+                width: 34px;
+                height: 34px;
+                min-height: 34px;
+            }
+
+            .wp-core-ui .button-primary {
+                height: 36px;
+                min-height: 36px;
+                margin-top: 4px;
+            }
+        }
+
         @media (max-width: 1180px) {
             body.login.home-login-kb {
-                --login-card-width: clamp(238px, 38vw, 310px);
-                --login-card-padding-x: clamp(14px, 2.7vw, 20px);
-                --login-card-padding-y: clamp(13px, 2.6vw, 18px);
+                --login-card-width: clamp(230px, 32vw, 286px);
+                --login-card-padding-x: clamp(13px, 2.4vw, 18px);
+                --login-card-padding-y: clamp(12px, 2.2vw, 16px);
                 --login-title-size: clamp(19px, 2.9vw, 22px);
                 --login-copy-size: clamp(10px, 1.8vw, 12px);
-                --login-control-height: clamp(28px, 4vw, 32px);
-                --login-button-height: clamp(30px, 4.3vw, 34px);
-                --login-row-gap: clamp(7px, 1.5vw, 9px);
+                --login-control-height: clamp(28px, 3.4vw, 30px);
+                --login-button-height: clamp(30px, 3.6vw, 32px);
+                --login-row-gap: clamp(6px, 1.2vw, 8px);
                 align-content: center;
-                gap: clamp(20px, 4.5vh, 32px);
-                padding: clamp(30px, 6vh, 56px) 16px;
+                gap: clamp(16px, 3.6vh, 28px);
+                padding: clamp(22px, 4.8vh, 44px) 16px;
             }
 
             .home-login-scene {
@@ -4071,7 +4129,7 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .home-login-intro {
-                margin-bottom: 14px;
+                margin-bottom: 12px;
                 text-align: center;
             }
 
@@ -4086,16 +4144,20 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .home-login-intro p {
-                margin-top: 12px;
+                margin-top: 10px;
                 margin-left: auto;
-                max-width: 15.5rem;
+                max-width: 14.5rem;
                 font-size: var(--login-copy-size);
-                line-height: 1.55;
+                line-height: 1.48;
             }
 
             .login form .input,
             .login input[type="text"] {
+                height: var(--login-control-height);
                 min-height: var(--login-control-height);
+                line-height: var(--login-control-height);
+                font-size: 13px;
+                padding: 0 10px;
             }
 
             .login #login form p,
@@ -4110,6 +4172,7 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .wp-core-ui .button-primary {
+                height: var(--login-button-height);
                 min-height: var(--login-button-height);
                 font-size: 14px !important;
             }
@@ -4195,10 +4258,13 @@ add_action('login_enqueue_scripts', function () {
 
             .login form .input,
             .login input[type="text"] {
+                height: var(--login-control-height);
                 min-height: var(--login-control-height);
+                line-height: var(--login-control-height);
             }
 
             .wp-core-ui .button-primary {
+                height: var(--login-button-height);
                 min-height: var(--login-button-height);
             }
         }
@@ -4265,7 +4331,9 @@ add_action('login_enqueue_scripts', function () {
 
             .login form .input,
             .login input[type="text"] {
+                height: var(--login-control-height);
                 min-height: var(--login-control-height);
+                line-height: var(--login-control-height);
             }
 
             .login input[type="checkbox"] {
