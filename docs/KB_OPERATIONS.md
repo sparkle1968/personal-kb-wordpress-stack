@@ -148,6 +148,8 @@ python3 scripts/kb-import.py \
 
 旧的 `scripts/publish-draft.py` 仍可用于已经整理好 HTML 的简单发布；新内容导入优先用 `scripts/kb-import.py`。
 
+前台“新资料”支持 Markdown 模式。使用 Markdown 模式保存时，WordPress 会保存 Markdown 原文，同时生成页面展示用 HTML；以后在文章前台编辑时会继续显示 Markdown。`scripts/kb-import.py --content-file note.md` 也会按 Markdown 导入，并把原文保存到文章 meta。
+
 ## 3. 同步到 Obsidian
 
 Obsidian 同步是单向镜像：WordPress 个人知识库是权威源，Obsidian 只保存本地 Markdown 副本。第一版不会从 Obsidian 反向发布到 WordPress。
@@ -196,6 +198,7 @@ ${OBSIDIAN_VAULT_DIR}/个人知识库
 
 - 按主分类写入目录，例如 `个人知识库/技术/123-标题.md`。
 - Markdown frontmatter 会保存 WordPress ID、slug、状态、日期、链接、分类、标签和来源信息。
+- 如果文章保存了 Markdown 原文，同步会优先使用原文；旧文章没有原文时才从 WordPress HTML 转 Markdown。
 - `tags` 会自动转换为 Obsidian 可用标签，例如空格转为连字符；WordPress 原始标签保存在 `wp_tags_original`。
 - 图片和视频保留 WordPress 远程链接，不下载附件。
 - 如果本地 Markdown 被手动改过，脚本会先移到 `_conflicts/`，再写入 WordPress 最新版本。

@@ -584,6 +584,16 @@ add_action('init', function () {
         },
     ]);
 
+    register_post_meta('post', 'home_kb_markdown_source', [
+        'type' => 'string',
+        'single' => true,
+        'show_in_rest' => true,
+        'sanitize_callback' => 'home_workflow_kb_sanitize_markdown_source',
+        'auth_callback' => function () {
+            return current_user_can('edit_posts');
+        },
+    ]);
+
     register_post_meta('post', 'home_kb_form_attachment_ids', [
         'type' => 'array',
         'single' => true,
@@ -730,6 +740,7 @@ add_action('save_post_post', function ($post_id) {
 add_action('admin_footer-post.php', 'home_workflow_public_share_admin_script');
 add_action('admin_footer-post-new.php', 'home_workflow_public_share_admin_script');
 add_action('wp_footer', 'home_workflow_public_share_frontend_script');
+add_action('wp_footer', 'home_workflow_kb_markdown_editor_script');
 
 function home_workflow_public_share_admin_script() {
     $screen = get_current_screen();
@@ -769,6 +780,27 @@ function home_workflow_public_share_copy_script() {
             }, 1500);
         }).catch(function () {
             document.execCommand('copy');
+        });
+    });
+    </script>
+    <?php
+}
+
+function home_workflow_kb_markdown_editor_script() {
+    if (home_workflow_site_kind() !== 'kb') {
+        return;
+    }
+    ?>
+    <script>
+    document.addEventListener('change', function (event) {
+        var input = event.target.closest('[data-kb-markdown-editor] input[type="radio"]');
+        if (!input) {
+            return;
+        }
+        var editor = input.closest('[data-kb-markdown-editor]');
+        var mode = input.value;
+        editor.querySelectorAll('[data-kb-content-panel]').forEach(function (panel) {
+            panel.hidden = panel.getAttribute('data-kb-content-panel') !== mode;
         });
     });
     </script>
@@ -1493,6 +1525,218 @@ function home_workflow_kb_autop_content($raw_content) {
     return wp_kses_post(wpautop($raw_content));
 }
 
+function home_workflow_kb_sanitize_markdown_source($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $value = str_replace(["\r\n", "\r"], "\n", (string) $value);
+    return str_replace("\0", '', $value);
+}
+
+function home_workflow_kb_markdown_source($post_id) {
+    return home_workflow_kb_sanitize_markdown_source(get_post_meta(absint($post_id), 'home_kb_markdown_source', true));
+}
+
+function home_workflow_kb_markdown_inline($text) {
+    $tokens = [];
+    $store_token = function ($html) use (&$tokens) {
+        $token = 'KBMDTOKEN' . count($tokens) . 'END';
+        $tokens[$token] = $html;
+        return $token;
+    };
+
+    $text = preg_replace_callback('/`([^`\n]+)`/u', function ($matches) use ($store_token) {
+        return $store_token('<code>' . esc_html($matches[1]) . '</code>');
+    }, (string) $text);
+
+    $text = preg_replace_callback('/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/u', function ($matches) use ($store_token) {
+        $url = esc_url_raw(html_entity_decode($matches[2]));
+        if ($url === '') {
+            return $matches[0];
+        }
+
+        return $store_token(sprintf(
+            '<img src="%s" alt="%s" loading="lazy" decoding="async">',
+            esc_url($url),
+            esc_attr($matches[1])
+        ));
+    }, $text);
+
+    $text = preg_replace_callback('/(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/u', function ($matches) use ($store_token) {
+        $url = esc_url_raw(html_entity_decode($matches[2]));
+        if ($url === '') {
+            return $matches[0];
+        }
+
+        return $store_token(sprintf(
+            '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
+            esc_url($url),
+            esc_html($matches[1])
+        ));
+    }, $text);
+
+    $html = esc_html($text);
+    $html = preg_replace('/\*\*([^*\n]+)\*\*/u', '<strong>$1</strong>', $html);
+    $html = preg_replace('/__([^_\n]+)__/u', '<strong>$1</strong>', $html);
+    $html = preg_replace('/(?<!\*)\*([^*\n]+)\*(?!\*)/u', '<em>$1</em>', $html);
+    $html = preg_replace('/(?<!_)_([^_\n]+)_(?!_)/u', '<em>$1</em>', $html);
+
+    return strtr($html, $tokens);
+}
+
+function home_workflow_kb_markdown_paragraph_html($lines) {
+    $lines = array_values(array_filter(array_map('trim', (array) $lines), static function ($line) {
+        return $line !== '';
+    }));
+    if (!$lines) {
+        return '';
+    }
+
+    return '<p>' . implode('<br>', array_map('home_workflow_kb_markdown_inline', $lines)) . '</p>';
+}
+
+function home_workflow_kb_markdown_to_html($markdown) {
+    $markdown = trim(home_workflow_kb_sanitize_markdown_source($markdown));
+    if ($markdown === '') {
+        return '';
+    }
+
+    $lines = explode("\n", $markdown);
+    $html = [];
+    $paragraph = [];
+    $list_type = '';
+    $list_items = [];
+    $quote_lines = [];
+    $in_code = false;
+    $code_lines = [];
+    $code_lang = '';
+
+    $flush_paragraph = function () use (&$html, &$paragraph) {
+        $paragraph_html = home_workflow_kb_markdown_paragraph_html($paragraph);
+        if ($paragraph_html !== '') {
+            $html[] = $paragraph_html;
+        }
+        $paragraph = [];
+    };
+
+    $flush_list = function () use (&$html, &$list_type, &$list_items) {
+        if (!$list_type || !$list_items) {
+            $list_type = '';
+            $list_items = [];
+            return;
+        }
+        $tag = $list_type === 'ol' ? 'ol' : 'ul';
+        $html[] = '<' . $tag . '><li>' . implode('</li><li>', $list_items) . '</li></' . $tag . '>';
+        $list_type = '';
+        $list_items = [];
+    };
+
+    $flush_quote = function () use (&$html, &$quote_lines) {
+        if (!$quote_lines) {
+            return;
+        }
+        $quote_html = home_workflow_kb_markdown_paragraph_html($quote_lines);
+        if ($quote_html !== '') {
+            $html[] = '<blockquote>' . $quote_html . '</blockquote>';
+        }
+        $quote_lines = [];
+    };
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+
+        if ($in_code) {
+            if (preg_match('/^```+\s*$/', $trimmed)) {
+                $class = $code_lang !== '' ? ' class="language-' . esc_attr($code_lang) . '"' : '';
+                $html[] = '<pre><code' . $class . '>' . esc_html(implode("\n", $code_lines)) . '</code></pre>';
+                $in_code = false;
+                $code_lines = [];
+                $code_lang = '';
+            } else {
+                $code_lines[] = $line;
+            }
+            continue;
+        }
+
+        if (preg_match('/^```+\s*([A-Za-z0-9_-]+)?\s*$/', $trimmed, $matches)) {
+            $flush_paragraph();
+            $flush_list();
+            $flush_quote();
+            $in_code = true;
+            $code_lang = isset($matches[1]) ? sanitize_html_class($matches[1]) : '';
+            continue;
+        }
+
+        if ($trimmed === '') {
+            $flush_paragraph();
+            $flush_list();
+            $flush_quote();
+            continue;
+        }
+
+        if (preg_match('/^[-*_]{3,}$/', $trimmed)) {
+            $flush_paragraph();
+            $flush_list();
+            $flush_quote();
+            $html[] = '<hr>';
+            continue;
+        }
+
+        if (preg_match('/^(#{1,6})\s+(.+)$/u', $trimmed, $matches)) {
+            $flush_paragraph();
+            $flush_list();
+            $flush_quote();
+            $level = min(6, strlen($matches[1]));
+            $html[] = '<h' . $level . '>' . home_workflow_kb_markdown_inline($matches[2]) . '</h' . $level . '>';
+            continue;
+        }
+
+        if (preg_match('/^>\s?(.*)$/u', $trimmed, $matches)) {
+            $flush_paragraph();
+            $flush_list();
+            $quote_lines[] = $matches[1];
+            continue;
+        }
+
+        if (preg_match('/^[-*+]\s+(.+)$/u', $trimmed, $matches)) {
+            $flush_paragraph();
+            $flush_quote();
+            if ($list_type !== 'ul') {
+                $flush_list();
+                $list_type = 'ul';
+            }
+            $list_items[] = home_workflow_kb_markdown_inline($matches[1]);
+            continue;
+        }
+
+        if (preg_match('/^\d+[.)]\s+(.+)$/u', $trimmed, $matches)) {
+            $flush_paragraph();
+            $flush_quote();
+            if ($list_type !== 'ol') {
+                $flush_list();
+                $list_type = 'ol';
+            }
+            $list_items[] = home_workflow_kb_markdown_inline($matches[1]);
+            continue;
+        }
+
+        $flush_list();
+        $flush_quote();
+        $paragraph[] = $line;
+    }
+
+    if ($in_code) {
+        $class = $code_lang !== '' ? ' class="language-' . esc_attr($code_lang) . '"' : '';
+        $html[] = '<pre><code' . $class . '>' . esc_html(implode("\n", $code_lines)) . '</code></pre>';
+    }
+    $flush_paragraph();
+    $flush_list();
+    $flush_quote();
+
+    return wp_kses_post(implode("\n\n", $html));
+}
+
 function home_workflow_kb_frontend_edit_url($post_id, $extra_args = []) {
     $post_id = absint($post_id);
     $status = (string) get_post_status($post_id);
@@ -1533,6 +1777,8 @@ function home_workflow_kb_frontend_edit_controls($post_id) {
     $is_open = !empty($_GET['kb_edit']) || !empty($_GET['kb_saved']);
     $form_action = home_workflow_kb_frontend_edit_url($post_id);
     $cancel_url = get_permalink($post_id);
+    $markdown_source = home_workflow_kb_markdown_source($post_id);
+    $is_markdown = $markdown_source !== '';
 
     ob_start();
     ?>
@@ -1550,19 +1796,29 @@ function home_workflow_kb_frontend_edit_controls($post_id) {
                     <span>标题</span>
                     <input type="text" name="home_kb_inline_title" value="<?php echo esc_attr($post->post_title); ?>" maxlength="180" required>
                 </label>
-                <div class="kb-field">
-                    <span>正文</span>
-                    <?php
-                    wp_editor($post->post_content, 'home_kb_inline_content_' . $post_id, [
-                        'textarea_name' => 'home_kb_inline_content',
-                        'textarea_rows' => 14,
-                        'editor_height' => 360,
-                        'media_buttons' => current_user_can('upload_files'),
-                        'teeny' => false,
-                        'quicktags' => true,
-                    ]);
-                    ?>
-                </div>
+                <?php if ($is_markdown) : ?>
+                    <input type="hidden" name="home_kb_inline_content_mode" value="markdown">
+                    <label class="kb-field">
+                        <span>正文（Markdown）</span>
+                        <textarea class="kb-markdown-textarea" name="home_kb_inline_markdown" rows="18" spellcheck="false"><?php echo esc_textarea($markdown_source); ?></textarea>
+                    </label>
+                    <p class="kb-form-note"><strong>Markdown 编辑：</strong>保存后会自动生成页面展示用 HTML，同时保留 Markdown 原文。</p>
+                <?php else : ?>
+                    <input type="hidden" name="home_kb_inline_content_mode" value="html">
+                    <div class="kb-field">
+                        <span>正文</span>
+                        <?php
+                        wp_editor($post->post_content, 'home_kb_inline_content_' . $post_id, [
+                            'textarea_name' => 'home_kb_inline_content',
+                            'textarea_rows' => 14,
+                            'editor_height' => 360,
+                            'media_buttons' => current_user_can('upload_files'),
+                            'teeny' => false,
+                            'quicktags' => true,
+                        ]);
+                        ?>
+                    </div>
+                <?php endif; ?>
                 <p class="kb-form-note"><strong>前台直接保存：</strong>这里会直接更新当前文章，不进入 WordPress 后台。</p>
                 <div class="kb-form-actions">
                     <button type="submit">保存到当前文章</button>
@@ -1597,6 +1853,26 @@ function home_workflow_kb_media_html($attachment_ids) {
                     esc_attr($mime)
                 );
             }
+        }
+    }
+
+    return implode("\n\n", $pieces);
+}
+
+function home_workflow_kb_media_markdown($attachment_ids) {
+    $pieces = [];
+    foreach (home_workflow_kb_sanitize_id_list($attachment_ids) as $attachment_id) {
+        $url = wp_get_attachment_url($attachment_id);
+        if (!$url) {
+            continue;
+        }
+        $title = get_the_title($attachment_id);
+        $label = $title !== '' ? $title : basename((string) wp_parse_url($url, PHP_URL_PATH));
+        $mime = (string) get_post_mime_type($attachment_id);
+        if (str_starts_with($mime, 'image/')) {
+            $pieces[] = '![' . str_replace(["\n", ']'], [' ', ''], $label) . '](' . esc_url_raw($url) . ')';
+        } elseif (str_starts_with($mime, 'video/')) {
+            $pieces[] = '[' . str_replace(["\n", ']'], [' ', ''], $label) . '](' . esc_url_raw($url) . ')';
         }
     }
 
@@ -1776,11 +2052,22 @@ add_action('template_redirect', function () {
             wp_die('标题不能为空。', '前台编辑失败', ['response' => 400]);
         }
 
-        $content = isset($_POST['home_kb_inline_content'])
-            ? (string) wp_unslash($_POST['home_kb_inline_content'])
-            : '';
-        if (!current_user_can('unfiltered_html')) {
-            $content = wp_kses_post($content);
+        $content_mode = isset($_POST['home_kb_inline_content_mode'])
+            ? sanitize_key(wp_unslash($_POST['home_kb_inline_content_mode']))
+            : 'html';
+        if ($content_mode === 'markdown') {
+            $markdown_source = isset($_POST['home_kb_inline_markdown'])
+                ? home_workflow_kb_sanitize_markdown_source(wp_unslash($_POST['home_kb_inline_markdown']))
+                : '';
+            $content = home_workflow_kb_markdown_to_html($markdown_source);
+        } else {
+            $markdown_source = '';
+            $content = isset($_POST['home_kb_inline_content'])
+                ? (string) wp_unslash($_POST['home_kb_inline_content'])
+                : '';
+            if (!current_user_can('unfiltered_html')) {
+                $content = wp_kses_post($content);
+            }
         }
 
         $result = wp_update_post([
@@ -1790,6 +2077,11 @@ add_action('template_redirect', function () {
         ], true);
         if (is_wp_error($result)) {
             wp_die(esc_html($result->get_error_message()), '前台编辑失败', ['response' => 400]);
+        }
+        if ($content_mode === 'markdown') {
+            update_post_meta($post_id, 'home_kb_markdown_source', $markdown_source);
+        } else {
+            delete_post_meta($post_id, 'home_kb_markdown_source');
         }
 
         wp_safe_redirect(home_workflow_kb_frontend_edit_url($post_id, ['kb_saved' => '1']));
@@ -1816,8 +2108,19 @@ add_action('template_redirect', function () {
             wp_die('请选择有效分类。', '新增资料失败', ['response' => 400]);
         }
 
-        $raw_content = isset($_POST['home_kb_new_content']) ? wp_unslash($_POST['home_kb_new_content']) : '';
-        $content = home_workflow_kb_autop_content($raw_content);
+        $content_mode = isset($_POST['home_kb_new_content_mode'])
+            ? sanitize_key(wp_unslash($_POST['home_kb_new_content_mode']))
+            : 'markdown';
+        if ($content_mode === 'markdown') {
+            $markdown_source = isset($_POST['home_kb_new_markdown'])
+                ? home_workflow_kb_sanitize_markdown_source(wp_unslash($_POST['home_kb_new_markdown']))
+                : '';
+            $content = home_workflow_kb_markdown_to_html($markdown_source);
+        } else {
+            $markdown_source = '';
+            $raw_content = isset($_POST['home_kb_new_content']) ? wp_unslash($_POST['home_kb_new_content']) : '';
+            $content = home_workflow_kb_autop_content($raw_content);
+        }
         $source_url = isset($_POST['home_kb_new_source_url']) ? esc_url_raw(wp_unslash($_POST['home_kb_new_source_url'])) : '';
         $source_site = isset($_POST['home_kb_new_source_site']) ? sanitize_text_field(wp_unslash($_POST['home_kb_new_source_site'])) : '';
         $source_author = isset($_POST['home_kb_new_source_author']) ? sanitize_text_field(wp_unslash($_POST['home_kb_new_source_author'])) : '';
@@ -1846,6 +2149,9 @@ add_action('template_redirect', function () {
         if ($source_author !== '') {
             update_post_meta($post_id, 'source_author', $source_author);
         }
+        if ($content_mode === 'markdown') {
+            update_post_meta($post_id, 'home_kb_markdown_source', $markdown_source);
+        }
 
         $tags = isset($_POST['home_kb_new_tags'])
             ? home_workflow_kb_split_terms(wp_unslash($_POST['home_kb_new_tags']))
@@ -1862,11 +2168,23 @@ add_action('template_redirect', function () {
 
         if ($attachment_ids) {
             update_post_meta($post_id, 'home_kb_form_attachment_ids', $attachment_ids);
-            $media_html = home_workflow_kb_media_html($attachment_ids);
-            if ($media_html !== '') {
+            if ($content_mode === 'markdown') {
+                $media_markdown = home_workflow_kb_media_markdown($attachment_ids);
+                if ($media_markdown !== '') {
+                    $markdown_source = trim($markdown_source . "\n\n" . $media_markdown);
+                    update_post_meta($post_id, 'home_kb_markdown_source', $markdown_source);
+                    $content = home_workflow_kb_markdown_to_html($markdown_source);
+                }
+            } else {
+                $media_html = home_workflow_kb_media_html($attachment_ids);
+                if ($media_html !== '') {
+                    $content = trim($content . "\n\n" . $media_html);
+                }
+            }
+            if ($content !== '') {
                 wp_update_post([
                     'ID' => $post_id,
-                    'post_content' => trim($content . "\n\n" . $media_html),
+                    'post_content' => $content,
                 ]);
             }
         }
@@ -2264,10 +2582,28 @@ function home_workflow_render_kb_new_view() {
                 <input type="text" name="home_kb_new_title" maxlength="180" required>
             </label>
 
-            <label class="kb-field kb-field-full">
-                <span>正文</span>
-                <textarea name="home_kb_new_content" rows="14" placeholder="可以直接输入文字，也可以粘贴少量安全 HTML。普通换行会自动整理成段落。"></textarea>
-            </label>
+            <div class="kb-content-editor" data-kb-markdown-editor>
+                <div class="kb-editor-mode" role="radiogroup" aria-label="正文格式">
+                    <label>
+                        <input type="radio" name="home_kb_new_content_mode" value="markdown" checked>
+                        <span>Markdown</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="home_kb_new_content_mode" value="html">
+                        <span>普通文本 / 安全 HTML</span>
+                    </label>
+                </div>
+
+                <label class="kb-field kb-field-full kb-content-panel" data-kb-content-panel="markdown">
+                    <span>正文（Markdown）</span>
+                    <textarea class="kb-markdown-textarea" name="home_kb_new_markdown" rows="16" spellcheck="false" placeholder="# 标题&#10;&#10;可以写 **加粗**、列表、链接、图片和代码块。"></textarea>
+                </label>
+
+                <label class="kb-field kb-field-full kb-content-panel" data-kb-content-panel="html" hidden>
+                    <span>正文</span>
+                    <textarea name="home_kb_new_content" rows="14" placeholder="可以直接输入文字，也可以粘贴少量安全 HTML。普通换行会自动整理成段落。"></textarea>
+                </label>
+            </div>
 
             <div class="kb-field-grid">
                 <label class="kb-field">

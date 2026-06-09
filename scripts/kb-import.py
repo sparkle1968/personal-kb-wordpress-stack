@@ -1287,6 +1287,178 @@ def text_to_html(text: str) -> str:
     return "\n".join(f"<p>{html.escape(block).replace(chr(10), '<br>')}</p>" for block in blocks)
 
 
+def markdown_inline_html(value: str) -> str:
+    tokens: dict[str, str] = {}
+
+    def store(markup: str) -> str:
+        token = f"KBMDTOKEN{len(tokens)}END"
+        tokens[token] = markup
+        return token
+
+    def code_repl(match: re.Match[str]) -> str:
+        return store(f"<code>{html.escape(match.group(1))}</code>")
+
+    def image_repl(match: re.Match[str]) -> str:
+        url = match.group(2).strip()
+        if not url:
+            return match.group(0)
+        return store(
+            '<img src="{src}" alt="{alt}" loading="lazy" decoding="async">'.format(
+                src=html.escape(url, quote=True),
+                alt=html.escape(match.group(1), quote=True),
+            )
+        )
+
+    def link_repl(match: re.Match[str]) -> str:
+        url = match.group(2).strip()
+        if not url:
+            return match.group(0)
+        return store(
+            '<a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a>'.format(
+                href=html.escape(url, quote=True),
+                label=html.escape(match.group(1)),
+            )
+        )
+
+    value = re.sub(r"`([^`\n]+)`", code_repl, value)
+    value = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", image_repl, value)
+    value = re.sub(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", link_repl, value)
+    escaped = html.escape(value)
+    escaped = re.sub(r"\*\*([^*\n]+)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"__([^_\n]+)__", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", escaped)
+    escaped = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"<em>\1</em>", escaped)
+    for token, markup in tokens.items():
+        escaped = escaped.replace(token, markup)
+    return escaped
+
+
+def markdown_paragraph_html(lines: list[str]) -> str:
+    clean_lines = [line.strip() for line in lines if line.strip()]
+    if not clean_lines:
+        return ""
+    return "<p>" + "<br>".join(markdown_inline_html(line) for line in clean_lines) + "</p>"
+
+
+def markdown_to_html(markdown: str) -> str:
+    markdown = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not markdown:
+        return ""
+
+    out: list[str] = []
+    paragraph: list[str] = []
+    list_type = ""
+    list_items: list[str] = []
+    quote_lines: list[str] = []
+    in_code = False
+    code_lines: list[str] = []
+    code_lang = ""
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        rendered = markdown_paragraph_html(paragraph)
+        if rendered:
+            out.append(rendered)
+        paragraph = []
+
+    def flush_list() -> None:
+        nonlocal list_type, list_items
+        if list_type and list_items:
+            out.append(f"<{list_type}><li>" + "</li><li>".join(list_items) + f"</li></{list_type}>")
+        list_type = ""
+        list_items = []
+
+    def flush_quote() -> None:
+        nonlocal quote_lines
+        rendered = markdown_paragraph_html(quote_lines)
+        if rendered:
+            out.append(f"<blockquote>{rendered}</blockquote>")
+        quote_lines = []
+
+    for line in markdown.split("\n"):
+        stripped = line.strip()
+        if in_code:
+            if re.match(r"^```+\s*$", stripped):
+                lang = f' class="language-{html.escape(code_lang, quote=True)}"' if code_lang else ""
+                out.append(f"<pre><code{lang}>{html.escape(chr(10).join(code_lines))}</code></pre>")
+                in_code = False
+                code_lines = []
+                code_lang = ""
+            else:
+                code_lines.append(line)
+            continue
+
+        fence = re.match(r"^```+\s*([A-Za-z0-9_-]+)?\s*$", stripped)
+        if fence:
+            flush_paragraph()
+            flush_list()
+            flush_quote()
+            in_code = True
+            code_lang = fence.group(1) or ""
+            continue
+
+        if not stripped:
+            flush_paragraph()
+            flush_list()
+            flush_quote()
+            continue
+
+        if re.match(r"^[-*_]{3,}$", stripped):
+            flush_paragraph()
+            flush_list()
+            flush_quote()
+            out.append("<hr>")
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading:
+            flush_paragraph()
+            flush_list()
+            flush_quote()
+            level = min(6, len(heading.group(1)))
+            out.append(f"<h{level}>{markdown_inline_html(heading.group(2))}</h{level}>")
+            continue
+
+        quote = re.match(r"^>\s?(.*)$", stripped)
+        if quote:
+            flush_paragraph()
+            flush_list()
+            quote_lines.append(quote.group(1))
+            continue
+
+        unordered = re.match(r"^[-*+]\s+(.+)$", stripped)
+        if unordered:
+            flush_paragraph()
+            flush_quote()
+            if list_type != "ul":
+                flush_list()
+                list_type = "ul"
+            list_items.append(markdown_inline_html(unordered.group(1)))
+            continue
+
+        ordered = re.match(r"^\d+[.)]\s+(.+)$", stripped)
+        if ordered:
+            flush_paragraph()
+            flush_quote()
+            if list_type != "ol":
+                flush_list()
+                list_type = "ol"
+            list_items.append(markdown_inline_html(ordered.group(1)))
+            continue
+
+        flush_list()
+        flush_quote()
+        paragraph.append(line)
+
+    if in_code:
+        lang = f' class="language-{html.escape(code_lang, quote=True)}"' if code_lang else ""
+        out.append(f"<pre><code{lang}>{html.escape(chr(10).join(code_lines))}</code></pre>")
+    flush_paragraph()
+    flush_list()
+    flush_quote()
+    return "\n\n".join(out)
+
+
 def read_local_content(path: Path, force_html: bool = False) -> str:
     text = path.read_text()
     if force_html or re.search(r"</?[a-z][\s>/]", text, re.I):
@@ -1508,12 +1680,17 @@ def content_from_url(url: str, args: argparse.Namespace) -> dict:
 
 def content_from_file(args: argparse.Namespace) -> dict:
     path = Path(args.html_file or args.content_file)
-    body = read_local_content(path, force_html=bool(args.html_file))
+    markdown_source = ""
+    if args.content_file and path.suffix.lower() in {".md", ".markdown", ".mdown"}:
+        markdown_source = path.read_text()
+        body = markdown_to_html(markdown_source)
+    else:
+        body = read_local_content(path, force_html=bool(args.html_file))
     text = clean_text(re.sub(r"<[^>]+>", " ", body))
     source_url = args.source_url or ""
     if not args.title:
         raise ValueError("--title is required when importing from a local file")
-    return {
+    result = {
         "title": args.title,
         "content": body,
         "excerpt": args.excerpt or summarize(text),
@@ -1522,6 +1699,9 @@ def content_from_file(args: argparse.Namespace) -> dict:
         "source_author": args.source_author or "",
         "base_url": source_url or None,
     }
+    if markdown_source != "":
+        result["markdown_source"] = markdown_source
+    return result
 
 
 def build_payload(args: argparse.Namespace, imported: dict) -> dict:
@@ -1540,6 +1720,8 @@ def build_payload(args: argparse.Namespace, imported: dict) -> dict:
         "source_site": imported.get("source_site") or "",
         "source_author": imported.get("source_author") or "",
     }
+    if "markdown_source" in imported:
+        source_meta["home_kb_markdown_source"] = imported.get("markdown_source") or ""
     if not args.post_id or any(source_meta.values()):
         payload["meta"] = source_meta
     return payload

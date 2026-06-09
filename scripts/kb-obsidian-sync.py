@@ -434,6 +434,11 @@ def post_content(post: dict[str, Any]) -> str:
     return str(content or "")
 
 
+def markdown_source(post: dict[str, Any]) -> str:
+    meta = post.get("meta") if isinstance(post.get("meta"), dict) else {}
+    return scalar_meta(meta.get("home_kb_markdown_source")).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def source_meta(post: dict[str, Any]) -> dict[str, str]:
     meta = post.get("meta") if isinstance(post.get("meta"), dict) else {}
     return {
@@ -486,7 +491,7 @@ def markdown_for_post(post: dict[str, Any], category_map: dict[int, str], tag_ma
     categories = names_from_ids(post.get("categories"), category_map)
     tags = names_from_ids(post.get("tags"), tag_map)
     meta = source_meta(post)
-    body = html_to_markdown(post_content(post))
+    body = markdown_source(post) or html_to_markdown(post_content(post))
     if not body:
         excerpt = post.get("excerpt") or {}
         body = strip_html(str(excerpt.get("rendered") if isinstance(excerpt, dict) else excerpt))
