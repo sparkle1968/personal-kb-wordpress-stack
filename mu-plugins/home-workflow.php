@@ -662,7 +662,92 @@ add_action('rest_api_init', function () {
             ]);
         },
     ]);
+
+    register_rest_route('home-kb/v1', '/import-url', [
+        'methods' => WP_REST_Server::CREATABLE,
+        'permission_callback' => function () {
+            return home_workflow_site_kind() === 'kb'
+                && current_user_can('edit_posts')
+                && current_user_can('publish_posts')
+                && current_user_can('assign_categories');
+        },
+        'callback' => 'home_workflow_kb_rest_import_url',
+    ]);
 });
+
+function home_workflow_kb_rest_import_url(WP_REST_Request $request) {
+    $url = home_workflow_kb_clean_import_url($request->get_param('url'));
+    if ($url === '') {
+        return new WP_Error('home_kb_invalid_source_url', '来源链接无效。', ['status' => 400]);
+    }
+
+    $category_id = absint($request->get_param('category_id'));
+    $category = $category_id ? get_term($category_id, 'category') : null;
+    if (!$category instanceof WP_Term || is_wp_error($category)) {
+        return new WP_Error('home_kb_invalid_category', '请选择有效分类。', ['status' => 400]);
+    }
+
+    $article = home_workflow_kb_fetch_remote_article($url);
+    if (is_wp_error($article)) {
+        return $article;
+    }
+    if (trim(home_workflow_kb_html_text($article['content'])) === '' && stripos($article['content'], '<img') === false) {
+        return new WP_Error('home_kb_source_empty', '来源网页没有可导入内容。', ['status' => 422]);
+    }
+
+    $title = sanitize_text_field((string) $request->get_param('title'));
+    if ($title === '') {
+        $title = $article['title'];
+    }
+    if ($title === '') {
+        $title = home_workflow_kb_source_site_from_url($url) ?: '新资料';
+    }
+
+    $status = sanitize_key((string) $request->get_param('status'));
+    if (!in_array($status, ['publish', 'draft', 'pending'], true)) {
+        $status = 'publish';
+    }
+
+    $post_id = wp_insert_post([
+        'post_type' => 'post',
+        'post_status' => $status,
+        'post_title' => $title,
+        'post_content' => $article['content'],
+        'post_category' => [$category_id],
+    ], true);
+    if (is_wp_error($post_id)) {
+        return $post_id;
+    }
+
+    update_post_meta($post_id, 'source_url', $url);
+
+    $source_site = sanitize_text_field((string) $request->get_param('source_site'));
+    if ($source_site === '') {
+        $source_site = $article['source_site'];
+    }
+    if ($source_site !== '') {
+        update_post_meta($post_id, 'source_site', $source_site);
+    }
+
+    $source_author = sanitize_text_field((string) $request->get_param('source_author'));
+    if ($source_author !== '') {
+        update_post_meta($post_id, 'source_author', $source_author);
+    }
+
+    $tags = home_workflow_kb_split_terms((string) $request->get_param('tags'));
+    if ($tags) {
+        wp_set_post_tags($post_id, $tags, false);
+    }
+
+    return rest_ensure_response([
+        'id' => $post_id,
+        'status' => get_post_status($post_id),
+        'title' => get_the_title($post_id),
+        'link' => get_permalink($post_id),
+        'edit_link' => home_workflow_kb_frontend_edit_url($post_id),
+        'source_url' => $url,
+    ]);
+}
 
 add_action('add_meta_boxes', function () {
     add_meta_box(
@@ -801,6 +886,67 @@ function home_workflow_kb_markdown_editor_script() {
         var mode = input.value;
         editor.querySelectorAll('[data-kb-content-panel]').forEach(function (panel) {
             panel.hidden = panel.getAttribute('data-kb-content-panel') !== mode;
+        });
+    });
+
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('.kb-new-post-form[data-kb-url-import-endpoint]');
+        if (!form) {
+            return;
+        }
+
+        var sourceInput = form.querySelector('[name="home_kb_new_source_url"]');
+        var markdownInput = form.querySelector('[name="home_kb_new_markdown"]');
+        var htmlInput = form.querySelector('[name="home_kb_new_content"]');
+        var sourceUrl = sourceInput ? sourceInput.value.trim() : '';
+        var markdown = markdownInput ? markdownInput.value.trim() : '';
+        var html = htmlInput ? htmlInput.value.trim() : '';
+
+        if (!sourceUrl || markdown || html) {
+            return;
+        }
+
+        event.preventDefault();
+
+        var button = form.querySelector('button[type="submit"]');
+        if (button) {
+            button.disabled = true;
+            button.dataset.originalText = button.dataset.originalText || button.textContent;
+            button.textContent = '正在抓取来源...';
+        }
+
+        var payload = {
+            url: sourceUrl,
+            title: (form.querySelector('[name="home_kb_new_title"]') || {}).value || '',
+            category_id: (form.querySelector('[name="home_kb_new_category"]') || {}).value || '',
+            tags: (form.querySelector('[name="home_kb_new_tags"]') || {}).value || '',
+            source_site: (form.querySelector('[name="home_kb_new_source_site"]') || {}).value || '',
+            source_author: (form.querySelector('[name="home_kb_new_source_author"]') || {}).value || ''
+        };
+
+        fetch(form.getAttribute('data-kb-url-import-endpoint'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-WP-Nonce': form.getAttribute('data-kb-url-import-nonce') || ''
+            },
+            body: JSON.stringify(payload)
+        }).then(function (response) {
+            return response.json().then(function (data) {
+                if (!response.ok) {
+                    throw new Error(data && data.message ? data.message : '抓取失败');
+                }
+                return data;
+            });
+        }).then(function (data) {
+            window.location.href = data.link || data.edit_link || '<?php echo esc_js(home_url('/')); ?>';
+        }).catch(function (error) {
+            window.alert(error.message || '抓取来源失败，请先粘贴正文后再发布。');
+            if (button) {
+                button.disabled = false;
+                button.textContent = button.dataset.originalText || '发布到知识库';
+            }
         });
     });
     </script>
@@ -1737,6 +1883,242 @@ function home_workflow_kb_markdown_to_html($markdown) {
     return wp_kses_post(implode("\n\n", $html));
 }
 
+function home_workflow_kb_source_site_from_url($url) {
+    $host = wp_parse_url((string) $url, PHP_URL_HOST);
+    return $host ? preg_replace('/^www\./i', '', (string) $host) : '';
+}
+
+function home_workflow_kb_clean_import_url($value) {
+    $url = trim((string) $value);
+    if ($url === '') {
+        return '';
+    }
+
+    $url = esc_url_raw($url);
+    if ($url === '' || !wp_http_validate_url($url)) {
+        return '';
+    }
+
+    return $url;
+}
+
+function home_workflow_kb_absolute_url($url, $base_url) {
+    $url = trim(html_entity_decode((string) $url, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    if ($url === '' || preg_match('/^(data|mailto|tel|javascript):/i', $url)) {
+        return '';
+    }
+
+    if (preg_match('/^[a-z][a-z0-9+.-]*:\/\//i', $url)) {
+        return esc_url_raw($url);
+    }
+
+    $base = wp_parse_url((string) $base_url);
+    if (empty($base['scheme']) || empty($base['host'])) {
+        return '';
+    }
+
+    if (str_starts_with($url, '//')) {
+        return esc_url_raw($base['scheme'] . ':' . $url);
+    }
+
+    $root = $base['scheme'] . '://' . $base['host'];
+    if (!empty($base['port'])) {
+        $root .= ':' . $base['port'];
+    }
+
+    if (str_starts_with($url, '/')) {
+        return esc_url_raw($root . $url);
+    }
+
+    $path = isset($base['path']) ? (string) $base['path'] : '/';
+    $dir = rtrim(dirname($path), '/\\');
+    if ($dir === '' || $dir === '.') {
+        $dir = '';
+    }
+
+    return esc_url_raw($root . $dir . '/' . $url);
+}
+
+function home_workflow_kb_absolutize_markup_urls($html, $base_url) {
+    return preg_replace_callback('/\s(src|href)=([\'"])(.*?)\2/i', function ($matches) use ($base_url) {
+        $absolute = home_workflow_kb_absolute_url($matches[3], $base_url);
+        if ($absolute === '') {
+            return ' ' . $matches[1] . '=' . $matches[2] . esc_attr($matches[3]) . $matches[2];
+        }
+
+        return ' ' . $matches[1] . '=' . $matches[2] . esc_url($absolute) . $matches[2];
+    }, (string) $html);
+}
+
+function home_workflow_kb_html_text($html) {
+    $text = html_entity_decode(wp_strip_all_tags((string) $html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = preg_replace('/[ \t]+/u', ' ', $text);
+    $text = preg_replace('/\s*\n\s*/u', "\n", $text);
+    return trim((string) $text);
+}
+
+function home_workflow_kb_trim_text($text, $limit = 12000) {
+    $text = trim((string) $text);
+    if ($text === '') {
+        return '';
+    }
+
+    if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+        return mb_strlen($text, 'UTF-8') > $limit ? mb_substr($text, 0, $limit, 'UTF-8') . '...' : $text;
+    }
+
+    return strlen($text) > $limit ? substr($text, 0, $limit) . '...' : $text;
+}
+
+function home_workflow_kb_remote_meta_content($html, $name) {
+    $name_pattern = preg_quote((string) $name, '/');
+    if (preg_match('/<meta\b(?=[^>]*(?:property|name)=["\']' . $name_pattern . '["\'])(?=[^>]*content=["\']([^"\']+)["\'])[^>]*>/i', (string) $html, $matches)) {
+        return html_entity_decode(trim($matches[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    return '';
+}
+
+function home_workflow_kb_remote_title($html) {
+    $title = home_workflow_kb_remote_meta_content($html, 'og:title');
+    if ($title === '') {
+        $title = home_workflow_kb_remote_meta_content($html, 'twitter:title');
+    }
+    if ($title === '' && preg_match('/<title\b[^>]*>(.*?)<\/title>/is', (string) $html, $matches)) {
+        $title = home_workflow_kb_html_text($matches[1]);
+    }
+
+    return sanitize_text_field(home_workflow_kb_trim_text($title, 180));
+}
+
+function home_workflow_kb_largest_remote_region($html, $tag) {
+    if (!preg_match_all('/<' . preg_quote($tag, '/') . '\b[^>]*>.*?<\/' . preg_quote($tag, '/') . '>/is', (string) $html, $matches)) {
+        return '';
+    }
+
+    $best = '';
+    $best_length = 0;
+    foreach ($matches[0] as $candidate) {
+        $length = strlen(home_workflow_kb_html_text($candidate));
+        if ($length > $best_length) {
+            $best = $candidate;
+            $best_length = $length;
+        }
+    }
+
+    return $best;
+}
+
+function home_workflow_kb_extract_remote_content($html, $base_url) {
+    $html = (string) $html;
+    $html = preg_replace('/<!--.*?-->/s', '', $html);
+    $html = preg_replace('/<(script|style|noscript|svg|iframe|form|nav|header|footer|aside)\b[^>]*>.*?<\/\1>/is', '', $html);
+
+    $region = home_workflow_kb_largest_remote_region($html, 'article');
+    if ($region === '') {
+        $region = home_workflow_kb_largest_remote_region($html, 'main');
+    }
+    if ($region === '' && preg_match('/<body\b[^>]*>(.*?)<\/body>/is', $html, $matches)) {
+        $region = $matches[1];
+    }
+    if ($region === '') {
+        $region = $html;
+    }
+
+    $region = preg_replace('/\s(on[a-z]+)=([\'"]).*?\2/i', '', $region);
+    $region = home_workflow_kb_absolutize_markup_urls($region, $base_url);
+    $content = wp_kses_post($region);
+
+    if (strlen(home_workflow_kb_html_text($content)) >= 80) {
+        return $content;
+    }
+
+    $fallback = home_workflow_kb_remote_meta_content($html, 'description');
+    if ($fallback === '') {
+        $fallback = home_workflow_kb_html_text($region);
+    }
+
+    return wp_kses_post(wpautop(esc_html(home_workflow_kb_trim_text($fallback))));
+}
+
+function home_workflow_kb_fetch_remote_article($url) {
+    $url = home_workflow_kb_clean_import_url($url);
+    if ($url === '') {
+        return new WP_Error('home_kb_invalid_source_url', '来源链接无效。', ['status' => 400]);
+    }
+
+    $response = wp_safe_remote_get($url, [
+        'timeout' => 25,
+        'redirection' => 5,
+        'limit_response_size' => 6 * 1024 * 1024,
+        'user-agent' => 'Mozilla/5.0 PersonalKBImporter/1.0; ' . home_url('/'),
+        'headers' => [
+            'Accept' => 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+        ],
+    ]);
+    if (is_wp_error($response)) {
+        return $response;
+    }
+
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code < 200 || $code >= 400) {
+        return new WP_Error('home_kb_source_fetch_failed', '来源网页返回异常状态：' . $code, ['status' => 502]);
+    }
+
+    $body = (string) wp_remote_retrieve_body($response);
+    if (trim($body) === '') {
+        return new WP_Error('home_kb_source_empty', '来源网页没有可导入内容。', ['status' => 422]);
+    }
+
+    $content_type = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
+    if ($content_type !== '' && !str_contains($content_type, 'html') && !str_contains($content_type, 'text/plain') && !str_contains($content_type, 'text/')) {
+        return new WP_Error('home_kb_source_unsupported', '这个来源暂不支持自动抓取正文。', ['status' => 415]);
+    }
+
+    $is_plain_text = str_contains($content_type, 'text/plain');
+    $content = $is_plain_text ? wp_kses_post(wpautop(esc_html(home_workflow_kb_trim_text($body)))) : home_workflow_kb_extract_remote_content($body, $url);
+    $title = $is_plain_text ? '' : home_workflow_kb_remote_title($body);
+
+    return [
+        'url' => $url,
+        'title' => $title,
+        'content' => $content,
+        'source_site' => home_workflow_kb_source_site_from_url($url),
+    ];
+}
+
+function home_workflow_kb_new_prefill_values() {
+    $title = isset($_GET['title']) ? sanitize_text_field(wp_unslash($_GET['title'])) : '';
+    $text = isset($_GET['text']) ? sanitize_textarea_field(wp_unslash($_GET['text'])) : '';
+    $url = '';
+
+    foreach (['url', 'kb_share_url', 'source_url'] as $key) {
+        if (!isset($_GET[$key])) {
+            continue;
+        }
+        $candidate = home_workflow_kb_clean_import_url(wp_unslash($_GET[$key]));
+        if ($candidate !== '') {
+            $url = $candidate;
+            break;
+        }
+    }
+
+    if ($url === '') {
+        $candidate = home_workflow_kb_clean_import_url($text);
+        if ($candidate !== '') {
+            $url = $candidate;
+            $text = '';
+        }
+    }
+
+    return [
+        'title' => $title,
+        'markdown' => $text,
+        'source_url' => $url,
+        'source_site' => $url ? home_workflow_kb_source_site_from_url($url) : '',
+    ];
+}
+
 function home_workflow_kb_frontend_edit_url($post_id, $extra_args = []) {
     $post_id = absint($post_id);
     $status = (string) get_post_status($post_id);
@@ -2125,8 +2507,24 @@ add_action('template_redirect', function () {
         $source_site = isset($_POST['home_kb_new_source_site']) ? sanitize_text_field(wp_unslash($_POST['home_kb_new_source_site'])) : '';
         $source_author = isset($_POST['home_kb_new_source_author']) ? sanitize_text_field(wp_unslash($_POST['home_kb_new_source_author'])) : '';
         if ($source_url && $source_site === '') {
-            $host = wp_parse_url($source_url, PHP_URL_HOST);
-            $source_site = $host ? preg_replace('/^www\./i', '', (string) $host) : '';
+            $source_site = home_workflow_kb_source_site_from_url($source_url);
+        }
+
+        if (trim(home_workflow_kb_html_text($content)) === '' && $source_url !== '') {
+            $article = home_workflow_kb_fetch_remote_article($source_url);
+            if (is_wp_error($article)) {
+                wp_die(esc_html($article->get_error_message()), '来源抓取失败', ['response' => 400]);
+            }
+            if (trim(home_workflow_kb_html_text($article['content'])) === '' && stripos($article['content'], '<img') === false) {
+                wp_die('来源网页没有可导入内容。', '来源抓取失败', ['response' => 422]);
+            }
+
+            $content = $article['content'];
+            $content_mode = 'html';
+            $markdown_source = '';
+            if ($source_site === '') {
+                $source_site = $article['source_site'];
+            }
         }
 
         $post_id = wp_insert_post([
@@ -2560,6 +2958,7 @@ function home_workflow_render_kb_new_view() {
     $active_category_id = home_workflow_kb_request_category_id();
     $return_url = home_workflow_kb_home_url_with_category($active_category_id);
     $form_action = home_workflow_kb_view_url('new', $active_category_id);
+    $prefill = home_workflow_kb_new_prefill_values();
 
     ob_start();
     ?>
@@ -2573,13 +2972,13 @@ function home_workflow_render_kb_new_view() {
     </header>
 
     <section class="kb-editor-panel">
-        <form class="kb-new-post-form" method="post" action="<?php echo esc_url($form_action); ?>" enctype="multipart/form-data">
+        <form class="kb-new-post-form" method="post" action="<?php echo esc_url($form_action); ?>" enctype="multipart/form-data" data-kb-url-import-endpoint="<?php echo esc_url(rest_url('home-kb/v1/import-url')); ?>" data-kb-url-import-nonce="<?php echo esc_attr(wp_create_nonce('wp_rest')); ?>">
             <input type="hidden" name="home_kb_new_post_action" value="create">
             <?php wp_nonce_field('home_kb_new_post', 'home_kb_new_post_nonce'); ?>
 
             <label class="kb-field kb-field-full">
                 <span>标题</span>
-                <input type="text" name="home_kb_new_title" maxlength="180" required>
+                <input type="text" name="home_kb_new_title" maxlength="180" value="<?php echo esc_attr($prefill['title']); ?>" required>
             </label>
 
             <div class="kb-content-editor" data-kb-markdown-editor>
@@ -2596,7 +2995,7 @@ function home_workflow_render_kb_new_view() {
 
                 <label class="kb-field kb-field-full kb-content-panel" data-kb-content-panel="markdown">
                     <span>正文（Markdown）</span>
-                    <textarea class="kb-markdown-textarea" name="home_kb_new_markdown" rows="16" spellcheck="false" placeholder="# 标题&#10;&#10;可以写 **加粗**、列表、链接、图片和代码块。"></textarea>
+                    <textarea class="kb-markdown-textarea" name="home_kb_new_markdown" rows="16" spellcheck="false" placeholder="# 标题&#10;&#10;可以写 **加粗**、列表、链接、图片和代码块。"><?php echo esc_textarea($prefill['markdown']); ?></textarea>
                 </label>
 
                 <label class="kb-field kb-field-full kb-content-panel" data-kb-content-panel="html" hidden>
@@ -2624,12 +3023,12 @@ function home_workflow_render_kb_new_view() {
             <div class="kb-field-grid">
                 <label class="kb-field">
                     <span>来源链接</span>
-                    <input type="url" name="home_kb_new_source_url" placeholder="https://example.com/article">
+                    <input type="url" name="home_kb_new_source_url" value="<?php echo esc_attr($prefill['source_url']); ?>" placeholder="https://example.com/article">
                 </label>
 
                 <label class="kb-field">
                     <span>来源站点</span>
-                    <input type="text" name="home_kb_new_source_site" placeholder="留空时会从来源链接自动推断">
+                    <input type="text" name="home_kb_new_source_site" value="<?php echo esc_attr($prefill['source_site']); ?>" placeholder="留空时会从来源链接自动推断">
                 </label>
             </div>
 
