@@ -4285,6 +4285,8 @@ add_action('login_enqueue_scripts', function () {
             min-height: 100vh;
             padding: clamp(28px, 7vw, 64px) 18px;
             overflow: auto;
+            overflow-x: hidden;
+            -webkit-text-size-adjust: 100%;
         }
 
         body.login.home-login-kb::before {
@@ -4635,8 +4637,8 @@ add_action('login_enqueue_scripts', function () {
 
         .login #login {
             box-sizing: border-box;
-            width: min(430px, calc(100vw - 44px));
-            max-width: min(430px, calc(100vw - 44px));
+            width: min(372px, calc(100vw - 44px));
+            max-width: min(372px, calc(100vw - 44px));
             padding: 0;
             margin: max(6vh, 32px) auto !important;
             justify-self: center;
@@ -4644,7 +4646,7 @@ add_action('login_enqueue_scripts', function () {
             border-radius: 0;
             background: rgba(251, 248, 241, 0.74);
             box-shadow: 0 22px 70px rgba(32, 28, 23, 0.08);
-            padding: 38px 42px 32px;
+            padding: 28px 32px 24px;
         }
 
         body.login #login h1.wp-login-logo,
@@ -4653,7 +4655,7 @@ add_action('login_enqueue_scripts', function () {
         }
 
         .home-login-intro {
-            margin: 0 0 24px;
+            margin: 0 0 18px;
             text-align: center;
         }
 
@@ -4671,7 +4673,7 @@ add_action('login_enqueue_scripts', function () {
             display: block;
             color: var(--home-ink);
             font-family: var(--home-serif);
-            font-size: 34px;
+            font-size: 28px;
             font-weight: 900;
             letter-spacing: 0;
         }
@@ -4681,16 +4683,16 @@ add_action('login_enqueue_scripts', function () {
             display: block;
             width: min(260px, 72%);
             height: 1px;
-            margin: 18px auto 0;
+            margin: 14px auto 0;
             background: var(--home-line-strong);
         }
 
         .home-login-intro p {
-            margin: 18px auto 0;
+            margin: 14px auto 0;
             max-width: 22rem;
             color: var(--home-muted);
-            font-size: 14px;
-            line-height: 1.78;
+            font-size: 13px;
+            line-height: 1.62;
             overflow-wrap: anywhere;
         }
 
@@ -4705,12 +4707,12 @@ add_action('login_enqueue_scripts', function () {
 
         .login #login form p,
         .login .user-pass-wrap {
-            margin: 0 0 12px;
+            margin: 0 0 10px;
         }
 
         .login .user-pass-wrap label {
             display: block;
-            margin: 0 0 6px;
+            margin: 0 0 5px;
         }
 
         .login label {
@@ -4722,14 +4724,16 @@ add_action('login_enqueue_scripts', function () {
 
         .login form .input,
         .login input[type="text"] {
-            min-height: 38px;
+            height: 34px;
+            min-height: 34px;
+            line-height: 1.2;
             border: 1px solid var(--home-line);
             border-radius: 0;
             background: rgba(255, 252, 245, 0.72);
             color: var(--home-ink);
-            font-size: 14px;
+            font-size: 13px;
             box-shadow: none;
-            padding: 0 12px;
+            padding: 0 10px;
         }
 
         .login form .input:focus,
@@ -4739,9 +4743,9 @@ add_action('login_enqueue_scripts', function () {
         }
 
         .login .button.wp-hide-pw {
-            width: 38px;
-            height: 38px;
-            min-height: 38px;
+            width: 34px;
+            height: 34px;
+            min-height: 34px;
             color: #3d58ee;
         }
 
@@ -4781,13 +4785,13 @@ add_action('login_enqueue_scripts', function () {
 
         .wp-core-ui .button-primary {
             width: 100%;
-            min-height: 40px;
-            margin-top: 6px;
+            min-height: 36px;
+            margin-top: 4px;
             border: 0 !important;
             border-radius: 0 !important;
             background: var(--home-accent-strong) !important;
             color: #fffaf0 !important;
-            font-size: 14px !important;
+            font-size: 13px !important;
             font-weight: 800;
         }
 
@@ -4797,8 +4801,8 @@ add_action('login_enqueue_scripts', function () {
         }
 
         .login #nav {
-            margin: 24px 0 0;
-            padding-top: 18px;
+            margin: 20px 0 0;
+            padding-top: 14px;
             border-top: 1px solid var(--home-line);
             text-align: center;
         }
@@ -4828,12 +4832,12 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .login #login {
-                width: min(380px, 100%) !important;
-                max-width: min(380px, 100%) !important;
+                width: min(340px, 100%) !important;
+                max-width: min(340px, 100%) !important;
                 margin: 0 !important;
                 justify-self: end;
                 transform: none;
-                padding: 36px 34px 30px;
+                padding: 28px 28px 24px;
             }
         }
 
@@ -4845,9 +4849,9 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .login #login {
-                width: min(340px, 100%) !important;
-                max-width: min(340px, 100%) !important;
-                padding: 28px 28px 24px;
+                width: min(308px, 100%) !important;
+                max-width: min(308px, 100%) !important;
+                padding: 22px 24px 20px;
             }
 
             .home-login-intro {
@@ -4855,7 +4859,7 @@ add_action('login_enqueue_scripts', function () {
             }
 
             .home-login-intro strong {
-                font-size: 28px;
+                font-size: 24px;
             }
 
             .home-login-intro p {
@@ -4875,35 +4879,35 @@ add_action('login_enqueue_scripts', function () {
 
             .login form .input,
             .login input[type="text"] {
-                height: 34px;
-                min-height: 34px;
-                line-height: 34px;
+                height: 30px;
+                min-height: 30px;
+                line-height: 1.2;
                 font-size: 13px;
                 padding: 0 10px;
             }
 
             .login .button.wp-hide-pw {
-                width: 34px;
-                height: 34px;
-                min-height: 34px;
+                width: 30px;
+                height: 30px;
+                min-height: 30px;
             }
 
             .wp-core-ui .button-primary {
-                height: 36px;
-                min-height: 36px;
+                height: 32px;
+                min-height: 32px;
                 margin-top: 4px;
             }
         }
 
         @media (max-width: 1180px) {
             body.login.home-login-kb {
-                --login-card-width: clamp(230px, 32vw, 286px);
+                --login-card-width: clamp(226px, 30vw, 270px);
                 --login-card-padding-x: clamp(13px, 2.4vw, 18px);
                 --login-card-padding-y: clamp(12px, 2.2vw, 16px);
                 --login-title-size: clamp(19px, 2.9vw, 22px);
                 --login-copy-size: clamp(10px, 1.8vw, 12px);
-                --login-control-height: clamp(28px, 3.4vw, 30px);
-                --login-button-height: clamp(30px, 3.6vw, 32px);
+                --login-control-height: clamp(30px, 3.2vw, 32px);
+                --login-button-height: clamp(32px, 3.4vw, 34px);
                 --login-row-gap: clamp(6px, 1.2vw, 8px);
                 align-content: center;
                 gap: clamp(16px, 3.6vh, 28px);
@@ -5031,7 +5035,7 @@ add_action('login_enqueue_scripts', function () {
             .login input[type="text"] {
                 height: var(--login-control-height);
                 min-height: var(--login-control-height);
-                line-height: var(--login-control-height);
+                line-height: 1.2;
                 font-size: 13px;
                 padding: 0 10px;
             }
@@ -5061,13 +5065,13 @@ add_action('login_enqueue_scripts', function () {
 
         @media (max-width: 700px) {
             body.login.home-login-kb {
-                --login-card-width: clamp(226px, 50vw, 280px);
+                --login-card-width: clamp(228px, 50vw, 270px);
                 --login-card-padding-x: clamp(12px, 3.3vw, 16px);
                 --login-card-padding-y: clamp(12px, 3.5vw, 16px);
                 --login-title-size: clamp(18px, 4.8vw, 20px);
                 --login-copy-size: clamp(10px, 2.7vw, 11px);
-                --login-control-height: clamp(27px, 5.5vw, 30px);
-                --login-button-height: clamp(29px, 5.8vw, 32px);
+                --login-control-height: 34px;
+                --login-button-height: 36px;
                 gap: 14px;
                 padding: 18px 12px 24px;
             }
@@ -5106,6 +5110,12 @@ add_action('login_enqueue_scripts', function () {
                 border-bottom: 0;
             }
 
+            .home-desktop {
+                grid-column: 1;
+                grid-row: auto;
+                justify-self: stretch;
+            }
+
             .home-login-feature strong {
                 margin-top: 4px;
                 font-size: 14px;
@@ -5136,7 +5146,8 @@ add_action('login_enqueue_scripts', function () {
             .login input[type="text"] {
                 height: var(--login-control-height);
                 min-height: var(--login-control-height);
-                line-height: var(--login-control-height);
+                line-height: 1.2;
+                font-size: 16px;
             }
 
             .wp-core-ui .button-primary {
@@ -5147,12 +5158,12 @@ add_action('login_enqueue_scripts', function () {
 
         @media (max-width: 520px) {
             body.login.home-login-kb {
-                --login-card-width: clamp(216px, 66vw, 264px);
-                --login-card-padding-x: clamp(10px, 3.4vw, 14px);
-                --login-card-padding-y: clamp(11px, 3.5vw, 16px);
+                --login-card-width: clamp(220px, 66vw, 252px);
+                --login-card-padding-x: clamp(11px, 3.4vw, 14px);
+                --login-card-padding-y: clamp(11px, 3.5vw, 15px);
                 --login-title-size: clamp(18px, 5vw, 20px);
-                --login-control-height: clamp(27px, 6.6vw, 30px);
-                --login-button-height: clamp(29px, 6.8vw, 32px);
+                --login-control-height: 34px;
+                --login-button-height: 36px;
                 padding: 16px 12px 22px;
                 gap: 12px;
             }
@@ -5209,7 +5220,8 @@ add_action('login_enqueue_scripts', function () {
             .login input[type="text"] {
                 height: var(--login-control-height);
                 min-height: var(--login-control-height);
-                line-height: var(--login-control-height);
+                line-height: 1.2;
+                font-size: 16px;
             }
 
             .login input[type="checkbox"] {
@@ -5230,6 +5242,13 @@ add_action('login_enqueue_scripts', function () {
             .login #nav {
                 margin-top: 12px;
                 padding-top: 10px;
+            }
+        }
+
+        @supports (-webkit-touch-callout: none) {
+            .login form .input,
+            .login input[type="text"] {
+                font-size: 16px;
             }
         }
     </style>
