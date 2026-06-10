@@ -75,6 +75,7 @@ X_TWEET_RESULT_FIELD_TOGGLES = {
     "withPayments": True,
     "withAuxiliaryUserLabels": True,
 }
+URL_TEXT_PATTERN = r"(https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+)"
 
 VOID_TAGS = {
     "area",
@@ -827,7 +828,7 @@ def clean_text_preserve_breaks(value: str) -> str:
 def text_with_links_to_html(text: str) -> str:
     escaped = html.escape(text)
     escaped = re.sub(
-        r"(https?://[^\s<]+)",
+        URL_TEXT_PATTERN,
         lambda match: (
             f'<a href="{html.escape(match.group(1), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer">{html.escape(match.group(1))}</a>'
@@ -840,7 +841,7 @@ def text_with_links_to_html(text: str) -> str:
 
 def linkify_escaped_text(escaped: str) -> str:
     return re.sub(
-        r"(https?://[^\s<]+)",
+        URL_TEXT_PATTERN,
         lambda match: (
             f'<a href="{html.escape(match.group(1), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer">{html.escape(match.group(1))}</a>'
@@ -1191,6 +1192,88 @@ def fetch_x_page_html(url: str, allow_private: bool = False) -> tuple[str, str]:
         data = read_limited(resp, MAX_HTML_BYTES)
         charset = resp.headers.get_content_charset() or html_charset(data) or "utf-8"
         return data.decode(charset, "replace"), resp.geturl()
+
+
+def decode_js_string_literal(value: str) -> str:
+    try:
+        decoded = json.loads('"' + value + '"')
+    except json.JSONDecodeError:
+        return value.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
+    return decoded if isinstance(decoded, str) else ""
+
+
+def first_js_string(source: str, pattern: str) -> str:
+    match = re.search(pattern, source, re.S)
+    if not match:
+        return ""
+    return decode_js_string_literal(match.group(1))
+
+
+def x_stream_media_items(source: str) -> list[dict]:
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw_url in re.findall(r'media_url_https:"((?:\\.|[^"\\])*)"', source, re.S):
+        media_url = decode_js_string_literal(raw_url)
+        if not media_url or media_url in seen:
+            continue
+        seen.add(media_url)
+        items.append({"media_url_https": media_url, "type": "photo"})
+    return items
+
+
+def x_author_from_meta(source: str) -> tuple[str, str, str]:
+    meta = parse_metadata(source)
+    title = meta_first(meta, ["og:title", "twitter:title"]) or meta.title()
+    match = re.match(r"(.+?)\s+\(@([^)]+)\)\s+on X", title)
+    if match:
+        author_name = clean_text(match.group(1))
+        screen_name = clean_text(match.group(2))
+        return author_name, screen_name, f"https://x.com/{screen_name}"
+
+    author_name = first_js_string(source, r'relevantPerson:\$R\[\d+\]=\{name:"((?:\\.|[^"\\])*)"')
+    screen_name = first_js_string(source, r'relevantPerson:\$R\[\d+\]=\{name:"(?:\\.|[^"\\])*",screenName:"((?:\\.|[^"\\])*)"')
+    if author_name or screen_name:
+        return author_name or screen_name, screen_name, f"https://x.com/{screen_name}" if screen_name else ""
+
+    return "", "", ""
+
+
+def content_from_x_stream(url: str, args: argparse.Namespace) -> dict:
+    source, final_url = fetch_x_page_html(url, args.allow_private_url)
+    note_text = first_js_string(source, r'__typename:"NoteTweet",text:"((?:\\.|[^"\\])*)"')
+    legacy_text = first_js_string(source, r'full_text:"((?:\\.|[^"\\])*)"')
+    source_text = clean_text_preserve_breaks(note_text or legacy_text)
+    if not source_text:
+        raise ValueError("X page did not expose tweet text")
+
+    author_label, _screen_name, author_url = x_author_from_meta(source)
+    media_items = x_stream_media_items(source)
+
+    pieces = ["<blockquote>" + text_with_links_to_html(source_text) + "</blockquote>"]
+    for media in media_items:
+        figure = figure_html_for_media(media)
+        if figure:
+            pieces.append(figure)
+    if author_label:
+        if author_url:
+            safe_author_url = html.escape(author_url, quote=True)
+            safe_author = html.escape(author_label)
+            pieces.append(
+                f'<p><strong>作者：</strong><a href="{safe_author_url}" target="_blank" rel="noopener noreferrer">{safe_author}</a></p>'
+            )
+        else:
+            pieces.append(f"<p><strong>作者：</strong>{html.escape(author_label)}</p>")
+
+    title_prefix = f"{author_label} on X" if author_label else "X / Twitter"
+    return {
+        "title": args.title or f"{title_prefix}: {summarize(source_text, 64)}",
+        "content": "\n".join(pieces),
+        "excerpt": args.excerpt or summarize(source_text),
+        "source_url": args.source_url or final_url,
+        "source_site": args.source_site or "X / Twitter",
+        "source_author": args.source_author or author_label,
+        "base_url": final_url,
+    }
 
 
 def content_from_x_page(url: str, args: argparse.Namespace) -> dict:
@@ -1641,6 +1724,10 @@ def content_from_url(url: str, args: argparse.Namespace) -> dict:
     if is_x_status_url(url):
         try:
             return content_from_x_api(url, args)
+        except (OSError, ValueError, error.URLError, error.HTTPError, json.JSONDecodeError):
+            pass
+        try:
+            return content_from_x_stream(url, args)
         except (OSError, ValueError, error.URLError, error.HTTPError, json.JSONDecodeError):
             pass
         try:

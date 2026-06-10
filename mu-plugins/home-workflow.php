@@ -730,6 +730,9 @@ function home_workflow_kb_rest_import_url(WP_REST_Request $request) {
     }
 
     $source_author = sanitize_text_field((string) $request->get_param('source_author'));
+    if ($source_author === '' && !empty($article['source_author'])) {
+        $source_author = sanitize_text_field((string) $article['source_author']);
+    }
     if ($source_author !== '') {
         update_post_meta($post_id, 'source_author', $source_author);
     }
@@ -1991,6 +1994,129 @@ function home_workflow_kb_remote_title($html) {
     return sanitize_text_field(home_workflow_kb_trim_text($title, 180));
 }
 
+function home_workflow_kb_is_x_status_url($url) {
+    $parts = wp_parse_url((string) $url);
+    $host = isset($parts['host']) ? strtolower(preg_replace('/^www\./i', '', (string) $parts['host'])) : '';
+    $path = isset($parts['path']) ? (string) $parts['path'] : '';
+
+    return in_array($host, ['x.com', 'twitter.com', 'mobile.twitter.com'], true)
+        && preg_match('#/status(?:es)?/\d+#', $path);
+}
+
+function home_workflow_kb_decode_js_string($value) {
+    $decoded = json_decode('"' . (string) $value . '"', true);
+    if (is_string($decoded)) {
+        return $decoded;
+    }
+
+    return str_replace(['\\n', '\\"', '\\/'], ["\n", '"', '/'], (string) $value);
+}
+
+function home_workflow_kb_first_js_string($html, $pattern) {
+    if (!preg_match($pattern, (string) $html, $matches)) {
+        return '';
+    }
+
+    return home_workflow_kb_decode_js_string($matches[1]);
+}
+
+function home_workflow_kb_plain_text_to_html($text) {
+    $text = home_workflow_kb_trim_text($text, 20000);
+    if ($text === '') {
+        return '';
+    }
+
+    $paragraphs = preg_split('/\n{2,}/', str_replace(["\r\n", "\r"], "\n", $text));
+    $html = [];
+    foreach ($paragraphs as $paragraph) {
+        $paragraph = trim($paragraph);
+        if ($paragraph === '') {
+            continue;
+        }
+        $html[] = '<p>' . nl2br(esc_html($paragraph), false) . '</p>';
+    }
+
+    return implode("\n", $html);
+}
+
+function home_workflow_kb_x_author_from_html($html) {
+    $title = home_workflow_kb_remote_meta_content($html, 'og:title');
+    if (preg_match('/^(.+?)\s+\(@([^)]+)\)\s+on X/u', $title, $matches)) {
+        return [
+            'name' => sanitize_text_field($matches[1]),
+            'screen_name' => sanitize_text_field($matches[2]),
+        ];
+    }
+
+    $name = home_workflow_kb_first_js_string($html, '/relevantPerson:\$R\[\d+\]=\{name:"((?:\\\\.|[^"\\\\])*)"/s');
+    $screen_name = home_workflow_kb_first_js_string($html, '/relevantPerson:\$R\[\d+\]=\{name:"(?:\\\\.|[^"\\\\])*",screenName:"((?:\\\\.|[^"\\\\])*)"/s');
+
+    return [
+        'name' => sanitize_text_field($name ?: $screen_name),
+        'screen_name' => sanitize_text_field($screen_name),
+    ];
+}
+
+function home_workflow_kb_x_media_urls_from_html($html) {
+    if (!preg_match_all('/media_url_https:"((?:\\\\.|[^"\\\\])*)"/s', (string) $html, $matches)) {
+        $og_image = home_workflow_kb_remote_meta_content($html, 'og:image');
+        return $og_image !== '' ? [$og_image] : [];
+    }
+
+    $urls = [];
+    foreach ($matches[1] as $raw_url) {
+        $url = esc_url_raw(home_workflow_kb_decode_js_string($raw_url));
+        if ($url !== '' && !in_array($url, $urls, true)) {
+            $urls[] = $url;
+        }
+    }
+
+    return $urls;
+}
+
+function home_workflow_kb_extract_x_status_article($html, $url) {
+    if (!home_workflow_kb_is_x_status_url($url)) {
+        return null;
+    }
+
+    $note_text = home_workflow_kb_first_js_string($html, '/__typename:"NoteTweet",text:"((?:\\\\.|[^"\\\\])*)"/s');
+    $legacy_text = home_workflow_kb_first_js_string($html, '/full_text:"((?:\\\\.|[^"\\\\])*)"/s');
+    $text = trim($note_text !== '' ? $note_text : $legacy_text);
+    if ($text === '') {
+        return null;
+    }
+
+    $author = home_workflow_kb_x_author_from_html($html);
+    $pieces = ['<blockquote>' . home_workflow_kb_plain_text_to_html($text) . '</blockquote>'];
+    foreach (home_workflow_kb_x_media_urls_from_html($html) as $image_url) {
+        $pieces[] = sprintf(
+            '<figure><img src="%s" alt="" loading="lazy" decoding="async"></figure>',
+            esc_url($image_url)
+        );
+    }
+
+    if ($author['name'] !== '') {
+        if ($author['screen_name'] !== '') {
+            $pieces[] = sprintf(
+                '<p><strong>作者：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
+                esc_url('https://x.com/' . $author['screen_name']),
+                esc_html($author['name'])
+            );
+        } else {
+            $pieces[] = '<p><strong>作者：</strong>' . esc_html($author['name']) . '</p>';
+        }
+    }
+
+    $title_prefix = $author['name'] !== '' ? $author['name'] . ' on X' : 'X / Twitter';
+
+    return [
+        'title' => sanitize_text_field($title_prefix . ': ' . home_workflow_kb_trim_text($text, 80)),
+        'content' => wp_kses_post(implode("\n", $pieces)),
+        'source_site' => 'X / Twitter',
+        'source_author' => $author['name'],
+    ];
+}
+
 function home_workflow_kb_largest_remote_region($html, $tag) {
     if (!preg_match_all('/<' . preg_quote($tag, '/') . '\b[^>]*>.*?<\/' . preg_quote($tag, '/') . '>/is', (string) $html, $matches)) {
         return '';
@@ -2076,6 +2202,17 @@ function home_workflow_kb_fetch_remote_article($url) {
     }
 
     $is_plain_text = str_contains($content_type, 'text/plain');
+    $x_article = $is_plain_text ? null : home_workflow_kb_extract_x_status_article($body, $url);
+    if (is_array($x_article)) {
+        return [
+            'url' => $url,
+            'title' => $x_article['title'],
+            'content' => $x_article['content'],
+            'source_site' => $x_article['source_site'],
+            'source_author' => $x_article['source_author'],
+        ];
+    }
+
     $content = $is_plain_text ? wp_kses_post(wpautop(esc_html(home_workflow_kb_trim_text($body)))) : home_workflow_kb_extract_remote_content($body, $url);
     $title = $is_plain_text ? '' : home_workflow_kb_remote_title($body);
 
@@ -2084,6 +2221,7 @@ function home_workflow_kb_fetch_remote_article($url) {
         'title' => $title,
         'content' => $content,
         'source_site' => home_workflow_kb_source_site_from_url($url),
+        'source_author' => '',
     ];
 }
 
@@ -2524,6 +2662,9 @@ add_action('template_redirect', function () {
             $markdown_source = '';
             if ($source_site === '') {
                 $source_site = $article['source_site'];
+            }
+            if ($source_author === '' && !empty($article['source_author'])) {
+                $source_author = sanitize_text_field((string) $article['source_author']);
             }
         }
 
