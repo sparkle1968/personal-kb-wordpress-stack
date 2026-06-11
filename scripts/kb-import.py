@@ -825,6 +825,22 @@ def clean_text_preserve_breaks(value: str) -> str:
     return "\n".join(lines).strip()
 
 
+def text_is_url_only(value: str) -> bool:
+    text = clean_text_preserve_breaks(value)
+    if not text:
+        return True
+    without_urls = re.sub(URL_TEXT_PATTERN, "", text)
+    without_urls = re.sub(r"[\s\W_]+", "", without_urls, flags=re.U)
+    return not without_urls.strip()
+
+
+def title_should_use_remote(value: str) -> bool:
+    title = clean_text(value)
+    if not title:
+        return True
+    return text_is_url_only(title) or bool(re.search(r"\bon\s+X:\s*https?://", title, re.I))
+
+
 def text_with_links_to_html(text: str) -> str:
     escaped = html.escape(text)
     escaped = re.sub(
@@ -1135,11 +1151,11 @@ def content_from_x_api(url: str, args: argparse.Namespace) -> dict:
         title = x_article_title(article) or args.title
         text = x_article_text(article)
         source_text = text or x_legacy_text(tweet, media_items)
-        content_title = args.title or title or f"{author_label} on X"
+        content_title = title if title_should_use_remote(args.title) and title else (args.title or title or f"{author_label} on X")
     else:
         note_text = x_note_text(tweet)
         source_text = note_text or x_legacy_text(tweet, media_items)
-        content_title = args.title or (
+        content_title = args.title if not title_should_use_remote(args.title) else (
             f"{author_label} on X: {summarize(source_text, 64)}" if source_text else url
         )
 
@@ -1212,12 +1228,13 @@ def first_js_string(source: str, pattern: str) -> str:
 def x_stream_media_items(source: str) -> list[dict]:
     items: list[dict] = []
     seen: set[str] = set()
-    for raw_url in re.findall(r'media_url_https:"((?:\\.|[^"\\])*)"', source, re.S):
-        media_url = decode_js_string_literal(raw_url)
-        if not media_url or media_url in seen:
-            continue
-        seen.add(media_url)
-        items.append({"media_url_https": media_url, "type": "photo"})
+    for field in ("media_url_https", "original_img_url"):
+        for raw_url in re.findall(field + r':"((?:\\.|[^"\\])*)"', source, re.S):
+            media_url = decode_js_string_literal(raw_url)
+            if not media_url or media_url in seen:
+                continue
+            seen.add(media_url)
+            items.append({"media_url_https": media_url, "type": "photo"})
     return items
 
 
@@ -1238,15 +1255,86 @@ def x_author_from_meta(source: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def x_article_entity_from_stream(source: str) -> dict:
+    match = re.search(
+        r'__typename:"ArticleEntity",rest_id:"((?:\\.|[^"\\])*)",title:"((?:\\.|[^"\\])*)",preview_text:"((?:\\.|[^"\\])*)"',
+        source,
+        re.S,
+    )
+    if not match:
+        return {}
+
+    rest_id = clean_text(decode_js_string_literal(match.group(1)))
+    title = clean_text(decode_js_string_literal(match.group(2)))
+    preview = clean_text_preserve_breaks(decode_js_string_literal(match.group(3)))
+    cover_url = first_js_string(source, r'original_img_url:"((?:\\.|[^"\\])*)"')
+
+    if not title and not preview:
+        return {}
+
+    return {
+        "rest_id": rest_id,
+        "title": title,
+        "preview": preview,
+        "cover_url": cover_url,
+        "url": f"https://x.com/i/article/{rest_id}" if rest_id else "",
+    }
+
+
+def content_from_x_article_entity(article: dict, args: argparse.Namespace, final_url: str, author_label: str, author_url: str) -> dict:
+    pieces = []
+    article_url = str(article.get("url") or "")
+    if article_url:
+        safe_url = html.escape(article_url, quote=True)
+        pieces.append(
+            f'<p><strong>X Article：</strong><a href="{safe_url}" target="_blank" rel="noopener noreferrer">{html.escape(article_url)}</a></p>'
+        )
+
+    cover_url = str(article.get("cover_url") or "")
+    if cover_url:
+        pieces.append(figure_html_for_media({"media_url_https": cover_url, "display_url": article.get("title") or "X Article"}))
+
+    preview = clean_text_preserve_breaks(str(article.get("preview") or ""))
+    if preview:
+        pieces.append("<h2>文章导读</h2>")
+        pieces.append(text_with_links_to_html(preview))
+
+    if author_label:
+        if author_url:
+            safe_author_url = html.escape(author_url, quote=True)
+            safe_author = html.escape(author_label)
+            pieces.append(
+                f'<p><strong>作者：</strong><a href="{safe_author_url}" target="_blank" rel="noopener noreferrer">{safe_author}</a></p>'
+            )
+        else:
+            pieces.append(f"<p><strong>作者：</strong>{html.escape(author_label)}</p>")
+
+    article_title = clean_text(str(article.get("title") or ""))
+    return {
+        "title": article_title if title_should_use_remote(args.title) and article_title else (args.title or article_title or "X Article"),
+        "content": "\n".join(piece for piece in pieces if piece),
+        "excerpt": args.excerpt or summarize(preview),
+        "source_url": args.source_url or final_url,
+        "source_site": args.source_site or "X / Twitter",
+        "source_author": args.source_author or author_label,
+        "base_url": final_url,
+    }
+
+
 def content_from_x_stream(url: str, args: argparse.Namespace) -> dict:
     source, final_url = fetch_x_page_html(url, args.allow_private_url)
+    article = x_article_entity_from_stream(source)
     note_text = first_js_string(source, r'__typename:"NoteTweet",text:"((?:\\.|[^"\\])*)"')
     legacy_text = first_js_string(source, r'full_text:"((?:\\.|[^"\\])*)"')
     source_text = clean_text_preserve_breaks(note_text or legacy_text)
+    author_label, _screen_name, author_url = x_author_from_meta(source)
+
+    if article and (not source_text or text_is_url_only(source_text)):
+        return content_from_x_article_entity(article, args, final_url, author_label, author_url)
+
     if not source_text:
         raise ValueError("X page did not expose tweet text")
 
-    author_label, _screen_name, author_url = x_author_from_meta(source)
     media_items = x_stream_media_items(source)
 
     pieces = ["<blockquote>" + text_with_links_to_html(source_text) + "</blockquote>"]
@@ -1266,7 +1354,7 @@ def content_from_x_stream(url: str, args: argparse.Namespace) -> dict:
 
     title_prefix = f"{author_label} on X" if author_label else "X / Twitter"
     return {
-        "title": args.title or f"{title_prefix}: {summarize(source_text, 64)}",
+        "title": args.title if not title_should_use_remote(args.title) else f"{title_prefix}: {summarize(source_text, 64)}",
         "content": "\n".join(pieces),
         "excerpt": args.excerpt or summarize(source_text),
         "source_url": args.source_url or final_url,

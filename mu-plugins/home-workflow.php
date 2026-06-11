@@ -696,7 +696,7 @@ function home_workflow_kb_rest_import_url(WP_REST_Request $request) {
     }
 
     $title = sanitize_text_field((string) $request->get_param('title'));
-    if ($title === '') {
+    if (home_workflow_kb_title_should_use_remote($title)) {
         $title = $article['title'];
     }
     if ($title === '') {
@@ -880,6 +880,18 @@ function home_workflow_kb_markdown_editor_script() {
     }
     ?>
     <script>
+    function homeKbValueIsUrlOnly(value) {
+        var text = (value || '').trim();
+        if (!text) {
+            return true;
+        }
+
+        return text
+            .replace(/https?:\/\/\S+/gi, '')
+            .replace(/[\s!"#$%&'()*+,\-.\/:;<=>?@[\\\]^_`{|}~，。！？；：“”‘’（）【】《》、]+/g, '')
+            .trim() === '';
+    }
+
     document.addEventListener('change', function (event) {
         var input = event.target.closest('[data-kb-markdown-editor] input[type="radio"]');
         if (!input) {
@@ -905,7 +917,7 @@ function home_workflow_kb_markdown_editor_script() {
         var markdown = markdownInput ? markdownInput.value.trim() : '';
         var html = htmlInput ? htmlInput.value.trim() : '';
 
-        if (!sourceUrl || markdown || html) {
+        if (!sourceUrl || (!homeKbValueIsUrlOnly(markdown) || !homeKbValueIsUrlOnly(html))) {
             return;
         }
 
@@ -1905,6 +1917,34 @@ function home_workflow_kb_clean_import_url($value) {
     return $url;
 }
 
+function home_workflow_kb_text_is_url_only($value) {
+    $text = trim(html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    if ($text === '') {
+        return true;
+    }
+
+    $without_urls = preg_replace('#https?://\S+#iu', '', $text);
+    $without_urls = preg_replace('/[\s\p{P}\p{S}]+/u', '', (string) $without_urls);
+
+    return trim((string) $without_urls) === '';
+}
+
+function home_workflow_kb_content_should_fetch_source($content) {
+    $text = home_workflow_kb_html_text($content);
+
+    return $text === '' || home_workflow_kb_text_is_url_only($text);
+}
+
+function home_workflow_kb_title_should_use_remote($title) {
+    $title = trim((string) $title);
+    if ($title === '') {
+        return true;
+    }
+
+    return home_workflow_kb_text_is_url_only($title)
+        || preg_match('#\bon\s+X:\s*https?://#iu', $title);
+}
+
 function home_workflow_kb_absolute_url($url, $base_url) {
     $url = trim(html_entity_decode((string) $url, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     if ($url === '' || preg_match('/^(data|mailto|tel|javascript):/i', $url)) {
@@ -2058,20 +2098,97 @@ function home_workflow_kb_x_author_from_html($html) {
 }
 
 function home_workflow_kb_x_media_urls_from_html($html) {
-    if (!preg_match_all('/media_url_https:"((?:\\\\.|[^"\\\\])*)"/s', (string) $html, $matches)) {
+    $urls = [];
+    foreach (['media_url_https', 'original_img_url'] as $field) {
+        if (!preg_match_all('/' . preg_quote($field, '/') . ':"((?:\\\\.|[^"\\\\])*)"/s', (string) $html, $matches)) {
+            continue;
+        }
+
+        foreach ($matches[1] as $raw_url) {
+            $url = esc_url_raw(home_workflow_kb_decode_js_string($raw_url));
+            if ($url !== '' && !in_array($url, $urls, true)) {
+                $urls[] = $url;
+            }
+        }
+    }
+
+    if (!$urls) {
         $og_image = home_workflow_kb_remote_meta_content($html, 'og:image');
         return $og_image !== '' ? [$og_image] : [];
     }
 
-    $urls = [];
-    foreach ($matches[1] as $raw_url) {
-        $url = esc_url_raw(home_workflow_kb_decode_js_string($raw_url));
-        if ($url !== '' && !in_array($url, $urls, true)) {
-            $urls[] = $url;
+    return $urls;
+}
+
+function home_workflow_kb_x_article_entity_from_html($html) {
+    if (!preg_match('/__typename:"ArticleEntity",rest_id:"((?:\\\\.|[^"\\\\])*)",title:"((?:\\\\.|[^"\\\\])*)",preview_text:"((?:\\\\.|[^"\\\\])*)"/s', (string) $html, $matches)) {
+        return null;
+    }
+
+    $rest_id = sanitize_text_field(home_workflow_kb_decode_js_string($matches[1]));
+    $title = sanitize_text_field(home_workflow_kb_decode_js_string($matches[2]));
+    $preview = home_workflow_kb_decode_js_string($matches[3]);
+    $cover_url = home_workflow_kb_first_js_string($html, '/original_img_url:"((?:\\\\.|[^"\\\\])*)"/s');
+    $cover_url = $cover_url !== '' ? esc_url_raw($cover_url) : '';
+
+    if ($title === '' && trim($preview) === '') {
+        return null;
+    }
+
+    return [
+        'rest_id' => $rest_id,
+        'title' => $title,
+        'preview' => $preview,
+        'cover_url' => $cover_url,
+        'url' => $rest_id !== '' ? 'https://x.com/i/article/' . $rest_id : '',
+    ];
+}
+
+function home_workflow_kb_x_article_entity_result($article, $author) {
+    if (!is_array($article)) {
+        return null;
+    }
+
+    $pieces = [];
+    if (!empty($article['url'])) {
+        $pieces[] = sprintf(
+            '<p><strong>X Article：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
+            esc_url($article['url']),
+            esc_html($article['url'])
+        );
+    }
+    if (!empty($article['cover_url'])) {
+        $pieces[] = sprintf(
+            '<figure><img src="%s" alt="" loading="lazy" decoding="async"></figure>',
+            esc_url($article['cover_url'])
+        );
+    }
+    if (!empty($article['preview'])) {
+        $pieces[] = '<h2>文章导读</h2>';
+        $pieces[] = home_workflow_kb_plain_text_to_html($article['preview']);
+    }
+    if (!empty($author['name'])) {
+        if (!empty($author['screen_name'])) {
+            $pieces[] = sprintf(
+                '<p><strong>作者：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
+                esc_url('https://x.com/' . $author['screen_name']),
+                esc_html($author['name'])
+            );
+        } else {
+            $pieces[] = '<p><strong>作者：</strong>' . esc_html($author['name']) . '</p>';
         }
     }
 
-    return $urls;
+    if (!$pieces) {
+        return null;
+    }
+
+    return [
+        'title' => $article['title'] !== '' ? $article['title'] : 'X Article',
+        'content' => wp_kses_post(implode("\n", $pieces)),
+        'source_site' => 'X / Twitter',
+        'source_author' => !empty($author['name']) ? $author['name'] : '',
+    ];
 }
 
 function home_workflow_kb_extract_x_status_article($html, $url) {
@@ -2079,14 +2196,18 @@ function home_workflow_kb_extract_x_status_article($html, $url) {
         return null;
     }
 
+    $author = home_workflow_kb_x_author_from_html($html);
+    $article = home_workflow_kb_x_article_entity_from_html($html);
     $note_text = home_workflow_kb_first_js_string($html, '/__typename:"NoteTweet",text:"((?:\\\\.|[^"\\\\])*)"/s');
     $legacy_text = home_workflow_kb_first_js_string($html, '/full_text:"((?:\\\\.|[^"\\\\])*)"/s');
     $text = trim($note_text !== '' ? $note_text : $legacy_text);
+    if (is_array($article) && ($text === '' || home_workflow_kb_text_is_url_only($text))) {
+        return home_workflow_kb_x_article_entity_result($article, $author);
+    }
     if ($text === '') {
         return null;
     }
 
-    $author = home_workflow_kb_x_author_from_html($html);
     $pieces = ['<blockquote>' . home_workflow_kb_plain_text_to_html($text) . '</blockquote>'];
     foreach (home_workflow_kb_x_media_urls_from_html($html) as $image_url) {
         $pieces[] = sprintf(
@@ -2247,6 +2368,9 @@ function home_workflow_kb_new_prefill_values() {
             $url = $candidate;
             $text = '';
         }
+    }
+    if ($url !== '' && home_workflow_kb_text_is_url_only($text)) {
+        $text = '';
     }
 
     return [
@@ -2648,7 +2772,7 @@ add_action('template_redirect', function () {
             $source_site = home_workflow_kb_source_site_from_url($source_url);
         }
 
-        if (trim(home_workflow_kb_html_text($content)) === '' && $source_url !== '') {
+        if (home_workflow_kb_content_should_fetch_source($content) && $source_url !== '') {
             $article = home_workflow_kb_fetch_remote_article($source_url);
             if (is_wp_error($article)) {
                 wp_die(esc_html($article->get_error_message()), '来源抓取失败', ['response' => 400]);
@@ -2660,6 +2784,9 @@ add_action('template_redirect', function () {
             $content = $article['content'];
             $content_mode = 'html';
             $markdown_source = '';
+            if (home_workflow_kb_title_should_use_remote($title) && !empty($article['title'])) {
+                $title = sanitize_text_field((string) $article['title']);
+            }
             if ($source_site === '') {
                 $source_site = $article['source_site'];
             }
