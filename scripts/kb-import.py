@@ -26,6 +26,7 @@ DEFAULT_MAX_VIDEO_BYTES = 128 * 1024 * 1024
 USER_AGENT = "PersonalKBImporter/1.0 (+https://kb.example.com)"
 X_API_BEARER = os.environ.get("X_API_BEARER", "")
 X_TWEET_RESULT_QUERY_ID = "SgZWKwvBiOKrSC0QeOGvXw"
+X_WEB_API_CONFIG: dict[str, str] | None = None
 X_TWEET_RESULT_FEATURES = {
     "creator_subscriptions_tweet_preview_api_enabled": True,
     "premium_content_api_read_enabled": True,
@@ -744,11 +745,11 @@ def is_x_status_url(url: str) -> bool:
     host = (parsed.hostname or "").lower().removeprefix("www.")
     if host not in {"x.com", "twitter.com", "mobile.twitter.com"}:
         return False
-    return bool(re.search(r"/status(?:es)?/\d+", parsed.path))
+    return bool(re.search(r"/(?:i/)?status(?:es)?/\d+", parsed.path))
 
 
 def x_status_id(url: str) -> str:
-    match = re.search(r"/status(?:es)?/(\d+)", parse.urlparse(url).path)
+    match = re.search(r"/(?:i/)?status(?:es)?/(\d+)", parse.urlparse(url).path)
     return match.group(1) if match else ""
 
 
@@ -938,14 +939,83 @@ def x_article_text_to_html(text: str, media_items: list[dict]) -> str:
     return "\n".join(output)
 
 
+def x_main_script_url(source: str) -> str:
+    match = re.search(
+        r'https://abs\.twimg\.com/responsive-web/client-web/main\.[^"\']+\.js',
+        source,
+    )
+    if match:
+        return html.unescape(match.group(0))
+    match = re.search(r'["\'](https://abs\.twimg\.com/responsive-web/client-web/[^"\']*main[^"\']*\.js)["\']', source)
+    return html.unescape(match.group(1)) if match else ""
+
+
+def fetch_text_asset(url: str, allow_private: bool = False, max_bytes: int = 3 * 1024 * 1024) -> str:
+    ok, reason = check_fetch_url(url, allow_private)
+    if not ok:
+        raise ValueError(f"Refusing to fetch {url}: {reason}")
+    req = request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"})
+    with request.urlopen(req, timeout=30) as resp:
+        data = read_limited(resp, max_bytes)
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return data.decode(charset, "replace")
+
+
+def x_web_api_config(tweet_id: str = "") -> dict[str, str]:
+    global X_WEB_API_CONFIG
+    if X_WEB_API_CONFIG:
+        return X_WEB_API_CONFIG
+
+    sources: list[str] = []
+    if tweet_id:
+        try:
+            source, _final_url = fetch_x_page_html(f"https://x.com/i/status/{tweet_id}", False)
+            sources.append(source)
+        except (OSError, ValueError, error.URLError, error.HTTPError):
+            pass
+    source, _final_url = fetch_html("https://x.com/", False)
+    sources.append(source)
+
+    script_url = x_main_script_url(source)
+    for candidate in sources:
+        script_url = x_main_script_url(candidate)
+        if script_url:
+            break
+    if not script_url:
+        raise ValueError("X page did not expose main script URL")
+
+    script = fetch_text_asset(script_url, False)
+    bearer_match = re.search(r"Bearer\s+(AAAA[A-Za-z0-9%_.-]+)", script)
+    query_match = re.search(r'queryId:"([^"]+)",operationName:"TweetResultByRestId"', script)
+    if not bearer_match or not query_match:
+        raise ValueError("X main script did not expose API bearer/query ID")
+
+    X_WEB_API_CONFIG = {
+        "bearer": bearer_match.group(1),
+        "tweet_result_query_id": query_match.group(1),
+    }
+    return X_WEB_API_CONFIG
+
+
+def x_api_bearer(tweet_id: str = "") -> str:
+    return X_API_BEARER or x_web_api_config(tweet_id).get("bearer", "")
+
+
+def x_tweet_result_query_id(tweet_id: str = "") -> str:
+    if X_API_BEARER and X_TWEET_RESULT_QUERY_ID:
+        return X_TWEET_RESULT_QUERY_ID
+    return x_web_api_config(tweet_id).get("tweet_result_query_id", X_TWEET_RESULT_QUERY_ID)
+
+
 def x_api_json(path: str, params: dict | None = None, guest_token: str | None = None) -> dict:
-    if not X_API_BEARER:
+    bearer = x_api_bearer()
+    if not bearer:
         raise ValueError("Set X_API_BEARER to enable X/Twitter API imports")
     url = "https://x.com" + path
     if params:
         url += "?" + parse.urlencode(params)
     headers = {
-        "Authorization": "Bearer " + X_API_BEARER,
+        "Authorization": "Bearer " + bearer,
         "Accept": "application/json",
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -961,14 +1031,15 @@ def x_api_json(path: str, params: dict | None = None, guest_token: str | None = 
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 
-def x_guest_token() -> str:
-    if not X_API_BEARER:
+def x_guest_token(tweet_id: str = "") -> str:
+    bearer = x_api_bearer(tweet_id)
+    if not bearer:
         raise ValueError("Set X_API_BEARER to enable X/Twitter API imports")
     req = request.Request(
         "https://api.x.com/1.1/guest/activate.json",
         data=b"",
         headers={
-            "Authorization": "Bearer " + X_API_BEARER,
+            "Authorization": "Bearer " + bearer,
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
@@ -997,9 +1068,9 @@ def fetch_x_tweet_result(tweet_id: str) -> dict:
         "fieldToggles": json.dumps(X_TWEET_RESULT_FIELD_TOGGLES, separators=(",", ":")),
     }
     data = x_api_json(
-        f"/i/api/graphql/{X_TWEET_RESULT_QUERY_ID}/TweetResultByRestId",
+        f"/i/api/graphql/{x_tweet_result_query_id(tweet_id)}/TweetResultByRestId",
         params,
-        guest_token=x_guest_token(),
+        guest_token=x_guest_token(tweet_id),
     )
     result = (((data.get("data") or {}).get("tweetResult") or {}).get("result") or {})
     if not result or result.get("__typename") != "Tweet":
