@@ -39,6 +39,11 @@ rm -f "$target"
 printf '\n请选择要发布到知识库的视频文件。\n'
 termux-storage-get "$target" || fail "没有选择视频文件"
 
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -s "$target" ]] && break
+  sleep 1
+done
+
 [[ -s "$target" ]] || fail "没有收到视频内容"
 printf '\n已选择视频：%s\n' "$target"
 
