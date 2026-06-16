@@ -14,6 +14,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import select
 import subprocess
 import sys
 import tempfile
@@ -245,6 +246,16 @@ def read_payload() -> dict[str, Any]:
     return payload
 
 
+def read_optional_stdin(timeout_seconds: float = 1.0) -> str:
+    try:
+        readable, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+    except (OSError, ValueError):
+        return ""
+    if not readable:
+        return ""
+    return sys.stdin.read()
+
+
 def run_importer(cmd: list[str]) -> dict[str, Any]:
     log_event("importer_start", cmd=[part if "PASSWORD" not in part else "[redacted]" for part in cmd])
     completed = subprocess.run(
@@ -325,8 +336,8 @@ def main() -> int:
         stdin_payload: dict[str, Any] = read_payload()
     else:
         stdin_payload = {}
-        if not args.url and not args.url_encoded:
-            raw_stdin = sys.stdin.read()
+        if not first_url(args.url) and not first_url(args.url_encoded):
+            raw_stdin = read_optional_stdin()
 
     encoded_url = args.url_encoded or stdin_payload.get("url_encoded")
     url_value = parse.unquote(str(encoded_url)) if encoded_url else args.url or stdin_payload.get("url") or stdin_payload.get("source_url") or raw_stdin
