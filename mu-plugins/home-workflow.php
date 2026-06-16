@@ -2212,15 +2212,36 @@ function home_workflow_kb_x_article_list_html($tag, $items) {
     return $html !== '' ? '<' . $tag . '>' . $html . '</' . $tag . '>' : '';
 }
 
-function home_workflow_kb_x_article_figure_html($image_url) {
-    $image_url = esc_url((string) $image_url);
-    if ($image_url === '') {
+function home_workflow_kb_x_article_figure_html($media) {
+    $image_url = is_array($media) ? home_workflow_kb_x_api_media_url($media) : esc_url_raw((string) $media);
+    $video_url = is_array($media) ? home_workflow_kb_x_api_video_url($media) : '';
+    if ($image_url === '' && $video_url === '') {
         return '';
     }
 
+    $caption = '';
+    if (is_array($media)) {
+        $caption = sanitize_text_field((string) ($media['display_url'] ?? $media['media_key'] ?? ''));
+        if (preg_match('/^(?:\d+_)?\d{10,}$|^[A-Za-z0-9_-]{8,}$/', $caption)) {
+            $caption = '';
+        }
+    }
+    $caption_html = $caption !== '' ? '<figcaption>' . esc_html($caption) . '</figcaption>' : '';
+
+    if ($video_url !== '') {
+        $poster_attr = $image_url !== '' ? ' poster="' . esc_url($image_url) . '"' : '';
+        return sprintf(
+            '<figure><video controls playsinline preload="metadata" src="%s"%s></video>%s</figure>',
+            esc_url($video_url),
+            $poster_attr,
+            $caption_html
+        );
+    }
+
     return sprintf(
-        '<figure><img src="%s" alt="" loading="lazy" decoding="async"></figure>',
-        $image_url
+        '<figure><img src="%s" alt="" loading="lazy" decoding="async">%s</figure>',
+        esc_url($image_url),
+        $caption_html
     );
 }
 
@@ -2657,7 +2678,7 @@ function home_workflow_kb_x_api_media_url($media) {
     if (!is_array($media)) {
         return '';
     }
-    $info = isset($media['media_info']) && is_array($media['media_info']) ? $media['media_info'] : $media;
+    $info = home_workflow_kb_x_api_media_info($media);
     foreach (['original_img_url', 'media_url_https', 'media_url'] as $key) {
         if (!empty($info[$key])) {
             return esc_url_raw((string) $info[$key]);
@@ -2667,12 +2688,69 @@ function home_workflow_kb_x_api_media_url($media) {
     return '';
 }
 
-function home_workflow_kb_x_api_media_urls($tweet, $article) {
-    $urls = [];
-    $add = function ($media) use (&$urls) {
-        $url = home_workflow_kb_x_api_media_url($media);
-        if ($url !== '' && !in_array($url, $urls, true)) {
-            $urls[] = $url;
+function home_workflow_kb_x_api_media_info($media) {
+    if (!is_array($media)) {
+        return [];
+    }
+
+    return isset($media['media_info']) && is_array($media['media_info']) ? $media['media_info'] : $media;
+}
+
+function home_workflow_kb_x_api_video_url($media) {
+    if (!is_array($media)) {
+        return '';
+    }
+
+    $info = home_workflow_kb_x_api_media_info($media);
+    $video_info = [];
+    if (!empty($info['video_info']) && is_array($info['video_info'])) {
+        $video_info = $info['video_info'];
+    } elseif (!empty($media['video_info']) && is_array($media['video_info'])) {
+        $video_info = $media['video_info'];
+    }
+
+    $variants = !empty($video_info['variants']) && is_array($video_info['variants']) ? $video_info['variants'] : [];
+    $best_url = '';
+    $best_bitrate = -1;
+    foreach ($variants as $variant) {
+        if (!is_array($variant)) {
+            continue;
+        }
+        $content_type = strtolower((string) ($variant['content_type'] ?? ''));
+        $url = esc_url_raw((string) ($variant['url'] ?? ''));
+        if ($content_type !== 'video/mp4' || $url === '') {
+            continue;
+        }
+        $bitrate = (int) ($variant['bitrate'] ?? 0);
+        if ($bitrate > $best_bitrate) {
+            $best_bitrate = $bitrate;
+            $best_url = $url;
+        }
+    }
+
+    return $best_url;
+}
+
+function home_workflow_kb_x_api_media_key($media) {
+    $video_url = home_workflow_kb_x_api_video_url($media);
+    if ($video_url !== '') {
+        return $video_url;
+    }
+
+    return home_workflow_kb_x_api_media_url($media);
+}
+
+function home_workflow_kb_x_api_media_items($tweet, $article = null) {
+    $items = [];
+    $seen = [];
+    $add = function ($media) use (&$items, &$seen) {
+        if (!is_array($media)) {
+            return;
+        }
+        $key = home_workflow_kb_x_api_media_key($media);
+        if ($key !== '' && !in_array($key, $seen, true)) {
+            $seen[] = $key;
+            $items[] = $media;
         }
     };
 
@@ -2694,7 +2772,7 @@ function home_workflow_kb_x_api_media_urls($tweet, $article) {
         }
     }
 
-    return $urls;
+    return $items;
 }
 
 function home_workflow_kb_x_api_author($tweet) {
@@ -2722,8 +2800,8 @@ function home_workflow_kb_x_article_full_result_from_tweet($tweet) {
         return null;
     }
 
-    $media_urls = home_workflow_kb_x_api_media_urls($tweet, $article);
-    $pieces = [home_workflow_kb_x_article_text_to_html($text, $media_urls)];
+    $media_items = home_workflow_kb_x_api_media_items($tweet, $article);
+    $pieces = [home_workflow_kb_x_article_text_to_html($text, $media_items)];
 
     $author = home_workflow_kb_x_api_author($tweet);
     if ($author['name'] !== '') {
@@ -2746,7 +2824,71 @@ function home_workflow_kb_x_article_full_result_from_tweet($tweet) {
     ];
 }
 
-function home_workflow_kb_fetch_x_api_status_article($html, $url) {
+function home_workflow_kb_x_api_tweet_text($tweet, $media_items = []) {
+    if (!is_array($tweet)) {
+        return '';
+    }
+
+    $note_text = $tweet['note_tweet']['note_tweet_results']['result']['text'] ?? '';
+    $legacy_text = $tweet['legacy']['full_text'] ?? '';
+    $text = trim((string) ($note_text !== '' ? $note_text : $legacy_text));
+    foreach ((array) $media_items as $media) {
+        if (!is_array($media) || empty($media['url'])) {
+            continue;
+        }
+        $text = str_replace((string) $media['url'], '', $text);
+    }
+
+    return trim($text);
+}
+
+function home_workflow_kb_x_tweet_full_result_from_tweet($tweet) {
+    if (!is_array($tweet)) {
+        return null;
+    }
+
+    $media_items = home_workflow_kb_x_api_media_items($tweet, null);
+    $text = home_workflow_kb_x_api_tweet_text($tweet, $media_items);
+    if ($text === '' && !$media_items) {
+        return null;
+    }
+
+    $pieces = [];
+    if ($text !== '') {
+        $pieces[] = '<blockquote>' . home_workflow_kb_plain_text_to_html($text) . '</blockquote>';
+    }
+    foreach ($media_items as $media) {
+        $figure = home_workflow_kb_x_article_figure_html($media);
+        if ($figure !== '') {
+            $pieces[] = $figure;
+        }
+    }
+
+    $author = home_workflow_kb_x_api_author($tweet);
+    if ($author['name'] !== '') {
+        if ($author['screen_name'] !== '') {
+            $pieces[] = sprintf(
+                '<p><strong>作者：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
+                esc_url('https://x.com/' . $author['screen_name']),
+                esc_html($author['name'])
+            );
+        } else {
+            $pieces[] = '<p><strong>作者：</strong>' . esc_html($author['name']) . '</p>';
+        }
+    }
+
+    $title_prefix = $author['name'] !== '' ? $author['name'] . ' on X' : 'X / Twitter';
+    $title_text = $text !== '' ? home_workflow_kb_trim_text($text, 80) : 'X 视频';
+
+    return [
+        'title' => sanitize_text_field($title_prefix . ': ' . $title_text),
+        'content' => wp_kses_post(implode("\n", $pieces)),
+        'source_site' => 'X / Twitter',
+        'source_author' => $author['name'],
+    ];
+}
+
+function home_workflow_kb_fetch_x_api_status_tweet($html, $url) {
     $tweet_id = home_workflow_kb_x_status_id($url);
     if ($tweet_id === '') {
         return null;
@@ -2805,6 +2947,15 @@ function home_workflow_kb_fetch_x_api_status_article($html, $url) {
         return null;
     }
 
+    return $result;
+}
+
+function home_workflow_kb_fetch_x_api_status_article($html, $url) {
+    $result = home_workflow_kb_fetch_x_api_status_tweet($html, $url);
+    if (!is_array($result)) {
+        return null;
+    }
+
     return home_workflow_kb_x_article_full_result_from_tweet($result);
 }
 
@@ -2813,14 +2964,20 @@ function home_workflow_kb_extract_x_status_article($html, $url) {
         return null;
     }
 
-    $author = home_workflow_kb_x_author_from_html($html);
-    $article = home_workflow_kb_x_article_entity_from_html($html);
-    if (is_array($article)) {
-        $api_article = home_workflow_kb_fetch_x_api_status_article($html, $url);
+    $api_tweet = home_workflow_kb_fetch_x_api_status_tweet($html, $url);
+    if (is_array($api_tweet)) {
+        $api_article = home_workflow_kb_x_article_full_result_from_tweet($api_tweet);
         if (is_array($api_article)) {
             return $api_article;
         }
+        $api_tweet_result = home_workflow_kb_x_tweet_full_result_from_tweet($api_tweet);
+        if (is_array($api_tweet_result)) {
+            return $api_tweet_result;
+        }
     }
+
+    $author = home_workflow_kb_x_author_from_html($html);
+    $article = home_workflow_kb_x_article_entity_from_html($html);
     $note_text = home_workflow_kb_first_js_string($html, '/__typename:"NoteTweet",text:"((?:\\\\.|[^"\\\\])*)"/s');
     $legacy_text = home_workflow_kb_first_js_string($html, '/full_text:"((?:\\\\.|[^"\\\\])*)"/s');
     $text = trim($note_text !== '' ? $note_text : $legacy_text);
