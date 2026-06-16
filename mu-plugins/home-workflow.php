@@ -3763,7 +3763,8 @@ add_action('template_redirect', function () {
             home_workflow_kb_delete_post_and_media($post_id);
         }
 
-        wp_safe_redirect(wp_get_referer() ?: home_url('/?kb_view=trash'));
+        $active_category_id = home_workflow_kb_request_category_id();
+        wp_safe_redirect(home_workflow_kb_view_url('trash', $active_category_id));
         exit;
     }
 
@@ -4490,21 +4491,33 @@ function home_workflow_render_kb_trash_view() {
     $category_counts = home_workflow_kb_category_counts($categories, home_workflow_kb_visible_statuses());
     $active_category_id = home_workflow_kb_request_category_id();
     $return_url = home_workflow_kb_home_url_with_category($active_category_id);
+    $new_url = home_workflow_kb_view_url('new', $active_category_id);
     $trash_action_url = home_workflow_kb_view_url('trash', $active_category_id);
     $trash_page_url = function ($page) use ($active_category_id) {
         return home_workflow_kb_view_url('trash', $active_category_id, ['kb_trash_page' => $page]);
     };
     $posts_per_page = 8;
     $requested_page = isset($_GET['kb_trash_page']) ? max(1, absint($_GET['kb_trash_page'])) : 1;
-    $trash_query = new WP_Query([
+    $trash_query_args = [
         'post_type' => 'post',
         'post_status' => 'trash',
         'posts_per_page' => $posts_per_page,
         'paged' => $requested_page,
         'orderby' => 'modified',
         'order' => 'DESC',
-    ] + (current_user_can('delete_others_posts') ? [] : ['author' => get_current_user_id()]));
+    ];
+    if (!current_user_can('delete_others_posts')) {
+        $trash_query_args['author'] = get_current_user_id();
+    }
+
+    $trash_query = new WP_Query($trash_query_args);
     $max_pages = max(1, (int) $trash_query->max_num_pages);
+    if ($requested_page > $max_pages) {
+        wp_reset_postdata();
+        $requested_page = $max_pages;
+        $trash_query_args['paged'] = $requested_page;
+        $trash_query = new WP_Query($trash_query_args);
+    }
     $current_page = min($requested_page, $max_pages);
 
     ob_start();
@@ -4553,6 +4566,10 @@ function home_workflow_render_kb_trash_view() {
             <article class="kb-card kb-empty">
                 <h2>回收站是空的</h2>
                 <p>首页删除的文章会先显示在这里。</p>
+                <div class="kb-form-actions">
+                    <a href="<?php echo esc_url($return_url); ?>">返回目录</a>
+                    <a href="<?php echo esc_url($new_url); ?>">新资料</a>
+                </div>
             </article>
         <?php endif; ?>
 
