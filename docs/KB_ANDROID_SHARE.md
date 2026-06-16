@@ -210,6 +210,7 @@ pkg install -y termux-api
 ```
 
 `kb-video-picker` 会调用 Android 文件选择器，选中视频后继续走同一条 SSH 上传链路。这个入口适合 Pixel / Android 分享菜单不显示 `termux-file-editor` 的情况。
+选择器会先把视频临时保存到 `/sdcard/Download/kb-picked-video.mp4`，避免 Termux:API 无法写入 Termux 私有目录。
 
 在 Termux 里也可以直接测试：
 

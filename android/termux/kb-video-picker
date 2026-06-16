@@ -9,7 +9,7 @@ if [[ -f "$KB_CONFIG_FILE" ]]; then
   source "$KB_CONFIG_FILE"
 fi
 
-KB_VIDEO_PICKER_DIR="${KB_VIDEO_PICKER_DIR:-$HOME/downloads}"
+KB_VIDEO_PICKER_DIR="${KB_VIDEO_PICKER_DIR:-/sdcard/Download}"
 KB_VIDEO_PICKER_NAME="${KB_VIDEO_PICKER_NAME:-kb-picked-video.mp4}"
 KB_FILE_EDITOR="${KB_FILE_EDITOR:-$HOME/bin/termux-file-editor}"
 
