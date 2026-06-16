@@ -2088,6 +2088,321 @@ function home_workflow_kb_plain_text_to_html($text) {
     return implode("\n", $html);
 }
 
+function home_workflow_kb_linkify_text($text) {
+    $text = (string) $text;
+    if ($text === '') {
+        return '';
+    }
+
+    $pattern = '#https?://[^\s<>"\']+#u';
+    if (!preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
+        return esc_html($text);
+    }
+
+    $html = '';
+    $offset = 0;
+    foreach ($matches[0] as $match) {
+        $url = (string) $match[0];
+        $position = (int) $match[1];
+        $html .= esc_html(substr($text, $offset, $position - $offset));
+
+        $trimmed_url = rtrim($url, ".,，。)）]】");
+        $suffix = substr($url, strlen($trimmed_url));
+        $html .= sprintf(
+            '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
+            esc_url($trimmed_url),
+            esc_html($trimmed_url)
+        );
+        $html .= esc_html($suffix);
+        $offset = $position + strlen($url);
+    }
+
+    return $html . esc_html(substr($text, $offset));
+}
+
+function home_workflow_kb_x_article_heading_tag($line) {
+    $line = trim((string) $line);
+    if ($line === '') {
+        return '';
+    }
+
+    if (preg_match('/^(目录|文章导读|附录|结论|总结)$/u', $line)) {
+        return 'h2';
+    }
+
+    if (preg_match('/^[一二三四五六七八九十]+[、.．]\s*\S/u', $line)) {
+        return 'h2';
+    }
+
+    if (preg_match('/^第[一二三四五六七八九十\d]+[章节步部分][：:、\s]\S*/u', $line)) {
+        return 'h2';
+    }
+
+    if (preg_match('/^拓展[一二三四五六七八九十]+[：:]/u', $line)) {
+        return 'h2';
+    }
+
+    return '';
+}
+
+function home_workflow_kb_x_article_visual_cue($text) {
+    return (bool) preg_match('/(如下|截图|页面|界面|效果|长这样|预览|设置页|下载页面|安装页面)/u', (string) $text);
+}
+
+function home_workflow_kb_x_article_ordered_item($line) {
+    if (preg_match('/^\d+\s*[.．、]\s*(\S.*)$/u', trim((string) $line), $matches)) {
+        return trim($matches[1]);
+    }
+
+    return '';
+}
+
+function home_workflow_kb_x_article_unordered_item($line) {
+    if (preg_match('/^[\-*•]\s*(\S.*)$/u', trim((string) $line), $matches)) {
+        return trim($matches[1]);
+    }
+
+    return '';
+}
+
+function home_workflow_kb_x_article_strip_order_marker($line) {
+    return trim(preg_replace('/^\d+\s*[.．、]\s*/u', '', trim((string) $line)));
+}
+
+function home_workflow_kb_x_article_list_intro($line) {
+    return (bool) preg_match('/(比如|包括|如下|这些|分别是)[：:]$/u', trim((string) $line));
+}
+
+function home_workflow_kb_x_article_text_length($text) {
+    $text = (string) $text;
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($text, 'UTF-8');
+    }
+
+    return strlen($text);
+}
+
+function home_workflow_kb_x_article_short_list_line($line, $max_chars = 32) {
+    $line = trim((string) $line);
+    if ($line === ''
+        || home_workflow_kb_x_article_heading_tag($line) !== ''
+        || home_workflow_kb_x_article_ordered_item($line) !== ''
+        || home_workflow_kb_x_article_unordered_item($line) !== '') {
+        return false;
+    }
+
+    if (preg_match('/[。！？；]$/u', $line)) {
+        return false;
+    }
+
+    return home_workflow_kb_x_article_text_length($line) <= $max_chars;
+}
+
+function home_workflow_kb_x_article_list_html($tag, $items) {
+    $tag = $tag === 'ul' ? 'ul' : 'ol';
+    $html = '';
+    foreach ($items as $item) {
+        $item = trim((string) $item);
+        if ($item === '') {
+            continue;
+        }
+        $html .= '<li>' . home_workflow_kb_linkify_text($item) . '</li>';
+    }
+
+    return $html !== '' ? '<' . $tag . '>' . $html . '</' . $tag . '>' : '';
+}
+
+function home_workflow_kb_x_article_figure_html($image_url) {
+    $image_url = esc_url((string) $image_url);
+    if ($image_url === '') {
+        return '';
+    }
+
+    return sprintf(
+        '<figure><img src="%s" alt="" loading="lazy" decoding="async"></figure>',
+        $image_url
+    );
+}
+
+function home_workflow_kb_x_article_text_to_html($text, $media_urls = []) {
+    $text = home_workflow_kb_trim_text($text, 30000);
+    if ($text === '') {
+        return '';
+    }
+
+    $figures = [];
+    foreach ((array) $media_urls as $media_url) {
+        $figure = home_workflow_kb_x_article_figure_html($media_url);
+        if ($figure !== '') {
+            $figures[] = $figure;
+        }
+    }
+
+    $figure_index = 0;
+    $html = [];
+    $paragraph_lines = [];
+    $paragraph_count = 0;
+
+    $take_figure = function () use (&$figures, &$figure_index) {
+        if ($figure_index >= count($figures)) {
+            return '';
+        }
+
+        $figure = $figures[$figure_index];
+        $figure_index++;
+        return $figure;
+    };
+
+    $flush_paragraph = function ($force_figure = false) use (&$html, &$paragraph_lines, &$paragraph_count, $take_figure) {
+        if (!$paragraph_lines) {
+            return;
+        }
+
+        $paragraph_text = trim(implode("\n", $paragraph_lines));
+        $paragraph_lines = [];
+        if ($paragraph_text === '') {
+            return;
+        }
+
+        $lines = array_map('home_workflow_kb_linkify_text', explode("\n", $paragraph_text));
+        $html[] = '<p>' . implode('<br>', $lines) . '</p>';
+        $paragraph_count++;
+
+        if ($force_figure || $paragraph_count === 1 || home_workflow_kb_x_article_visual_cue($paragraph_text)) {
+            $figure = $take_figure();
+            if ($figure !== '') {
+                $html[] = $figure;
+            }
+        }
+    };
+
+    $append_list = function ($tag, $items) use (&$html) {
+        $list_html = home_workflow_kb_x_article_list_html($tag, $items);
+        if ($list_html !== '') {
+            $html[] = $list_html;
+        }
+    };
+
+    $lines = array_map('trim', explode("\n", str_replace(["\r\n", "\r"], "\n", $text)));
+    $index = 0;
+    $line_count = count($lines);
+    while ($index < $line_count) {
+        $line = $lines[$index];
+        if ($line === '') {
+            $flush_paragraph();
+            $index++;
+            continue;
+        }
+
+        $ordered_item = home_workflow_kb_x_article_ordered_item($line);
+        if ($ordered_item !== '') {
+            $ordered_items = [$ordered_item];
+            $lookahead = $index + 1;
+            while ($lookahead < $line_count) {
+                $next_item = home_workflow_kb_x_article_ordered_item($lines[$lookahead]);
+                if ($next_item === '') {
+                    break;
+                }
+                $ordered_items[] = $next_item;
+                $lookahead++;
+            }
+            if (count($ordered_items) >= 2) {
+                $flush_paragraph();
+                $append_list('ol', $ordered_items);
+                $index = $lookahead;
+                continue;
+            }
+        }
+
+        $unordered_item = home_workflow_kb_x_article_unordered_item($line);
+        if ($unordered_item !== '') {
+            $unordered_items = [$unordered_item];
+            $lookahead = $index + 1;
+            while ($lookahead < $line_count) {
+                $next_item = home_workflow_kb_x_article_unordered_item($lines[$lookahead]);
+                if ($next_item === '') {
+                    break;
+                }
+                $unordered_items[] = $next_item;
+                $lookahead++;
+            }
+            $flush_paragraph();
+            $append_list('ul', $unordered_items);
+            $index = $lookahead;
+            continue;
+        }
+
+        $heading_tag = home_workflow_kb_x_article_heading_tag($line);
+        if ($heading_tag !== '') {
+            $flush_paragraph();
+            $html[] = '<' . $heading_tag . '>' . esc_html($line) . '</' . $heading_tag . '>';
+            $index++;
+            if (in_array($line, ['目录', '文章导读'], true)) {
+                $toc_items = [];
+                while ($index < $line_count) {
+                    $next_line = $lines[$index];
+                    if ($next_line === '') {
+                        $index++;
+                        if ($toc_items) {
+                            break;
+                        }
+                        continue;
+                    }
+                    if (home_workflow_kb_x_article_heading_tag($next_line) !== '') {
+                        break;
+                    }
+                    $toc_items[] = home_workflow_kb_x_article_strip_order_marker($next_line);
+                    $index++;
+                }
+                if (count($toc_items) >= 2) {
+                    $append_list('ol', $toc_items);
+                } else {
+                    $paragraph_lines = array_merge($paragraph_lines, $toc_items);
+                    $flush_paragraph();
+                }
+            }
+            continue;
+        }
+
+        if (home_workflow_kb_x_article_list_intro($line)) {
+            $lookahead = $index + 1;
+            $short_items = [];
+            while ($lookahead < $line_count && home_workflow_kb_x_article_short_list_line($lines[$lookahead])) {
+                $short_items[] = $lines[$lookahead];
+                $lookahead++;
+            }
+            if (count($short_items) >= 2) {
+                $flush_paragraph();
+                $html[] = '<p>' . home_workflow_kb_linkify_text($line) . '</p>';
+                $paragraph_count++;
+                $append_list('ul', $short_items);
+                if ($paragraph_count === 1) {
+                    $figure = $take_figure();
+                    if ($figure !== '') {
+                        $html[] = $figure;
+                    }
+                }
+                $index = $lookahead;
+                continue;
+            }
+        }
+
+        $paragraph_lines[] = $line;
+        $index++;
+    }
+
+    $flush_paragraph();
+
+    if ($figure_index < count($figures)) {
+        $html[] = '<h2>原文配图</h2>';
+        for (; $figure_index < count($figures); $figure_index++) {
+            $html[] = $figures[$figure_index];
+        }
+    }
+
+    return implode("\n", $html);
+}
+
 function home_workflow_kb_x_author_from_html($html) {
     $title = home_workflow_kb_remote_meta_content($html, 'og:title');
     if (preg_match('/^(.+?)\s+\(@([^)]+)\)\s+on X/u', $title, $matches)) {
@@ -2407,28 +2722,8 @@ function home_workflow_kb_x_article_full_result_from_tweet($tweet) {
         return null;
     }
 
-    $pieces = [];
-    $article_id = sanitize_text_field((string) ($article['rest_id'] ?? ''));
-    if ($article_id !== '') {
-        $article_url = 'https://x.com/i/article/' . $article_id;
-        $pieces[] = sprintf(
-            '<p><strong>X Article：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></p>',
-            esc_url($article_url),
-            esc_html($article_url)
-        );
-    }
-    $pieces[] = home_workflow_kb_plain_text_to_html($text);
-
     $media_urls = home_workflow_kb_x_api_media_urls($tweet, $article);
-    if ($media_urls) {
-        $pieces[] = '<h2>原文配图</h2>';
-        foreach ($media_urls as $image_url) {
-            $pieces[] = sprintf(
-                '<figure><img src="%s" alt="" loading="lazy" decoding="async"></figure>',
-                esc_url($image_url)
-            );
-        }
-    }
+    $pieces = [home_workflow_kb_x_article_text_to_html($text, $media_urls)];
 
     $author = home_workflow_kb_x_api_author($tweet);
     if ($author['name'] !== '') {

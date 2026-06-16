@@ -869,12 +869,14 @@ def linkify_escaped_text(escaped: str) -> str:
 
 def x_article_heading(line: str) -> str:
     line = line.strip()
+    if re.match(r"^(目录|文章导读|附录|结论|总结)$", line):
+        return "h2"
+    if re.match(r"^[一二三四五六七八九十]+[、.．]\s*\S", line):
+        return "h2"
+    if re.match(r"^第[一二三四五六七八九十\d]+[章节步部分][：:、\s]\S*", line):
+        return "h2"
     if re.match(r"^\d+\s*[.．、]\s*(有顺序|无序|步骤|选项|项目)", line):
         return ""
-    if re.match(r"^\d+\s*[.．、]\s*\S", line):
-        return "h2"
-    if re.match(r"^\d+\.\s*拓展", line):
-        return "h2"
     if re.match(r"^拓展[一二三四五六七八九十]+[：:]", line):
         return "h2"
     return ""
@@ -891,6 +893,27 @@ def x_article_text_to_html(text: str, media_items: list[dict]) -> str:
     output: list[str] = []
     paragraph_lines: list[str] = []
     paragraph_count = 0
+
+    def ordered_item(line: str) -> str:
+        match = re.match(r"^\d+\s*[.．、]\s*(\S.*)$", line)
+        return match.group(1).strip() if match else ""
+
+    def unordered_item(line: str) -> str:
+        match = re.match(r"^[\-*•]\s*(\S.*)$", line)
+        return match.group(1).strip() if match else ""
+
+    def strip_order_marker(line: str) -> str:
+        return re.sub(r"^\d+\s*[.．、]\s*", "", line).strip()
+
+    def list_intro(line: str) -> bool:
+        return bool(re.search(r"(比如|包括|如下|这些|分别是)[：:]$", line))
+
+    def short_list_line(line: str, max_len: int = 32) -> bool:
+        if not line or x_article_heading(line) or ordered_item(line) or unordered_item(line):
+            return False
+        if re.search(r"[。！？；]$", line):
+            return False
+        return len(line) <= max_len
 
     def take_figure() -> str:
         nonlocal figure_index
@@ -916,19 +939,101 @@ def x_article_text_to_html(text: str, media_items: list[dict]) -> str:
             if figure:
                 output.append(figure)
 
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
+    def append_list(tag: str, items: list[str]) -> None:
+        if not items:
+            return
+        rendered = "".join(
+            f"<li>{linkify_escaped_text(html.escape(item))}</li>" for item in items if item
+        )
+        if rendered:
+            output.append(f"<{tag}>{rendered}</{tag}>")
+
+    lines = [raw_line.strip() for raw_line in text.splitlines()]
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         if not line:
             flush_paragraph()
+            index += 1
             continue
+
+        numbered = ordered_item(line)
+        if numbered:
+            ordered_items = [numbered]
+            lookahead = index + 1
+            while lookahead < len(lines):
+                next_item = ordered_item(lines[lookahead])
+                if not next_item:
+                    break
+                ordered_items.append(next_item)
+                lookahead += 1
+            if len(ordered_items) >= 2:
+                flush_paragraph()
+                append_list("ol", ordered_items)
+                index = lookahead
+                continue
+
+        bullet = unordered_item(line)
+        if bullet:
+            bullet_items = [bullet]
+            lookahead = index + 1
+            while lookahead < len(lines):
+                next_item = unordered_item(lines[lookahead])
+                if not next_item:
+                    break
+                bullet_items.append(next_item)
+                lookahead += 1
+            if len(bullet_items) >= 1:
+                flush_paragraph()
+                append_list("ul", bullet_items)
+                index = lookahead
+                continue
 
         heading_tag = x_article_heading(line)
         if heading_tag:
             flush_paragraph()
             output.append(f"<{heading_tag}>{html.escape(line)}</{heading_tag}>")
+            index += 1
+            if line in {"目录", "文章导读"}:
+                toc_items: list[str] = []
+                while index < len(lines):
+                    next_line = lines[index]
+                    if not next_line:
+                        index += 1
+                        if toc_items:
+                            break
+                        continue
+                    if x_article_heading(next_line):
+                        break
+                    toc_items.append(strip_order_marker(next_line))
+                    index += 1
+                if len(toc_items) >= 2:
+                    append_list("ol", toc_items)
+                else:
+                    paragraph_lines.extend(toc_items)
+                    flush_paragraph()
             continue
 
+        if list_intro(line):
+            lookahead = index + 1
+            short_items: list[str] = []
+            while lookahead < len(lines) and short_list_line(lines[lookahead]):
+                short_items.append(lines[lookahead])
+                lookahead += 1
+            if len(short_items) >= 2:
+                flush_paragraph()
+                output.append(f"<p>{linkify_escaped_text(html.escape(line))}</p>")
+                paragraph_count += 1
+                append_list("ul", short_items)
+                if paragraph_count == 1:
+                    figure = take_figure()
+                    if figure:
+                        output.append(figure)
+                index = lookahead
+                continue
+
         paragraph_lines.append(line)
+        index += 1
 
     flush_paragraph()
 
