@@ -1,0 +1,45 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+export PATH="/data/data/com.termux/files/usr/bin:/system/bin:${PATH:-}"
+
+KB_CONFIG_FILE="${KB_CONFIG_FILE:-$HOME/.config/kb-android-share.env}"
+if [[ -f "$KB_CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$KB_CONFIG_FILE"
+fi
+
+KB_VIDEO_PICKER_DIR="${KB_VIDEO_PICKER_DIR:-$HOME/downloads}"
+KB_VIDEO_PICKER_NAME="${KB_VIDEO_PICKER_NAME:-kb-picked-video.mp4}"
+KB_FILE_EDITOR="${KB_FILE_EDITOR:-$HOME/bin/termux-file-editor}"
+
+toast_only() {
+  if command -v termux-toast >/dev/null 2>&1; then
+    termux-toast "$*"
+  fi
+}
+
+fail() {
+  local message="知识库视频选择失败：$*"
+  toast_only "$message"
+  printf '\n[失败] %s\n' "$message" >&2
+  exit 1
+}
+
+[[ -x "$KB_FILE_EDITOR" ]] || fail "缺少视频发布脚本：$KB_FILE_EDITOR"
+
+if ! command -v termux-storage-get >/dev/null 2>&1; then
+  fail "缺少 termux-storage-get。请安装 Termux:API 应用，并在 Termux 执行：pkg install termux-api"
+fi
+
+mkdir -p "$KB_VIDEO_PICKER_DIR"
+target="$KB_VIDEO_PICKER_DIR/$KB_VIDEO_PICKER_NAME"
+rm -f "$target"
+
+printf '\n请选择要发布到知识库的视频文件。\n'
+termux-storage-get "$target" || fail "没有选择视频文件"
+
+[[ -s "$target" ]] || fail "没有收到视频内容"
+printf '\n已选择视频：%s\n' "$target"
+
+exec "$KB_FILE_EDITOR" "$target"

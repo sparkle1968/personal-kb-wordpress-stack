@@ -16,10 +16,12 @@ config_dir="$home_dir/.config"
 config_file="$config_dir/kb-android-share.env"
 url_opener_src="$download_dir/termux-url-opener"
 file_editor_src="$download_dir/termux-file-editor"
+video_picker_src="$download_dir/kb-video-picker"
 key_src="$download_dir/$KB_KEY_NAME"
 pub_src="$download_dir/$KB_KEY_NAME.pub"
 url_opener_dst="$bin_dir/termux-url-opener"
 file_editor_dst="$bin_dir/termux-file-editor"
+video_picker_dst="$bin_dir/kb-video-picker"
 key_dst="$ssh_dir/$KB_KEY_NAME"
 
 say() {
@@ -62,6 +64,7 @@ fi
 
 need_file "$url_opener_src"
 need_file "$file_editor_src"
+need_file "$video_picker_src"
 if [[ ! -f "$key_src" && ! -f "$key_dst" ]]; then
   need_file "$key_src"
 fi
@@ -74,6 +77,8 @@ cp "$url_opener_src" "$url_opener_dst"
 chmod 700 "$url_opener_dst"
 cp "$file_editor_src" "$file_editor_dst"
 chmod 700 "$file_editor_dst"
+cp "$video_picker_src" "$video_picker_dst"
+chmod 700 "$video_picker_dst"
 
 if [[ -f "$key_src" ]]; then
   cp "$key_src" "$key_dst"
@@ -107,6 +112,7 @@ rm -f "$key_src" "$pub_src"
 say "安装完成。"
 say "网页分享入口：$url_opener_dst"
 say "视频分享入口：$file_editor_dst"
+say "主动选择视频入口：$video_picker_dst"
 say "配置文件：$config_file"
 say "SSH key：$key_dst"
 say "测试分类读取："

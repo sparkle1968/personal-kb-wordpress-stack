@@ -29,6 +29,7 @@ Termux 支持从安卓分享菜单接收 URL；当 `~/bin/termux-url-opener` 存
 
 - Termux
 - 可选：Termux:API，用于完成后显示 toast 提示
+- 可选但推荐：Termux:API，用于主动打开 Android 文件选择器发布视频
 
 Termux 官方说明：Termux 是安卓上的 Linux 环境，内置包管理，并可使用 OpenSSH 访问远程服务器。
 
@@ -49,6 +50,7 @@ adb devices -l
 adb install -r /private/tmp/com.termux_1002.apk
 adb push android/termux/termux-url-opener /sdcard/Download/termux-url-opener
 adb push android/termux/termux-file-editor /sdcard/Download/termux-file-editor
+adb push android/termux/kb-video-picker /sdcard/Download/kb-video-picker
 adb push android/termux/install-kb-share.sh /sdcard/Download/kb-android-install.sh
 ```
 
@@ -82,6 +84,7 @@ KB_HOST=<VM_IP> KB_USER=<ssh-user> bash /sdcard/Download/kb-android-install.sh
 ```text
 android/termux/termux-url-opener
 android/termux/termux-file-editor
+android/termux/kb-video-picker
 android/termux/install-kb-share.sh
 ```
 
@@ -199,6 +202,15 @@ Android 分享 URL 和分享文件不是同一个入口。网页 URL 会调用 `
 6. 可选输入正文说明。
 7. 等待返回 JSON，看到 `[成功] 视频已发布` 即完成。
 
+如果 Pixel 分享菜单里只看到普通的“Termux”，没有单独的视频选项，可以从 Termux 主动选择视频：
+
+```bash
+pkg install -y termux-api
+~/bin/kb-video-picker
+```
+
+`kb-video-picker` 会调用 Android 文件选择器，选中视频后继续走同一条 SSH 上传链路。这个入口适合 Pixel / Android 分享菜单不显示 `termux-file-editor` 的情况。
+
 在 Termux 里也可以直接测试：
 
 ```bash
@@ -295,6 +307,12 @@ KB_COMPOSE_FILE=compose.kb-cloudflare.yml ./scripts/kb-healthcheck.sh
 ### 分享视频后没有进入发布脚本
 
 有些 Android 应用会先让 Termux 保存文件，再让你选择打开目录或编辑文件。选择编辑或用 Termux 打开，才会触发 `termux-file-editor`。如果只保存到 downloads，不会自动发布。
+
+如果分享菜单里没有视频发布选择项，先用主动选择入口：
+
+```bash
+~/bin/kb-video-picker
+```
 
 如果手动测试也失败：
 
