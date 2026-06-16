@@ -2212,6 +2212,100 @@ function home_workflow_kb_x_article_list_html($tag, $items) {
     return $html !== '' ? '<' . $tag . '>' . $html . '</' . $tag . '>' : '';
 }
 
+function home_workflow_kb_x_remote_video_cache_limit() {
+    return 256 * 1024 * 1024;
+}
+
+function home_workflow_kb_x_cached_video_url($video_url) {
+    $video_url = esc_url_raw((string) $video_url);
+    if ($video_url === '') {
+        return '';
+    }
+
+    $parts = wp_parse_url($video_url);
+    $host = strtolower((string) ($parts['host'] ?? ''));
+    if (($parts['scheme'] ?? '') !== 'https' || $host !== 'video.twimg.com') {
+        return '';
+    }
+
+    $uploads = wp_upload_dir();
+    if (!empty($uploads['error']) || empty($uploads['basedir']) || empty($uploads['baseurl'])) {
+        return '';
+    }
+
+    $cache_dir = trailingslashit($uploads['basedir']) . 'kb-videos';
+    $cache_url = trailingslashit($uploads['baseurl']) . 'kb-videos';
+    if (!wp_mkdir_p($cache_dir) || !is_writable($cache_dir)) {
+        return '';
+    }
+
+    $hash = substr(hash('sha256', $video_url), 0, 20);
+    $filename = 'kb-x-video-' . $hash . '.mp4';
+    $target = trailingslashit($cache_dir) . $filename;
+    if (is_file($target) && filesize($target) > 0) {
+        return trailingslashit($cache_url) . rawurlencode($filename);
+    }
+
+    $limit = home_workflow_kb_x_remote_video_cache_limit();
+    $head = wp_remote_head($video_url, [
+        'timeout' => 20,
+        'redirection' => 3,
+        'user-agent' => 'HomeKnowledgeBaseImporter/1.0',
+    ]);
+    if (!is_wp_error($head)) {
+        $length = (int) wp_remote_retrieve_header($head, 'content-length');
+        $type = strtolower((string) wp_remote_retrieve_header($head, 'content-type'));
+        if ($length > $limit || ($type !== '' && !str_contains($type, 'video/mp4'))) {
+            return '';
+        }
+    }
+
+    if (!function_exists('download_url')) {
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+    }
+
+    $tmp = download_url($video_url, 300);
+    if (is_wp_error($tmp) || !is_string($tmp) || !is_file($tmp)) {
+        return '';
+    }
+
+    $size = filesize($tmp);
+    if ($size === false || $size <= 0 || $size > $limit) {
+        @unlink($tmp);
+        return '';
+    }
+
+    if (!@rename($tmp, $target)) {
+        if (!@copy($tmp, $target)) {
+            @unlink($tmp);
+            return '';
+        }
+        @unlink($tmp);
+    }
+    @chmod($target, 0644);
+
+    return trailingslashit($cache_url) . rawurlencode($filename);
+}
+
+function home_workflow_kb_x_video_fallback_html($video_url, $poster_url, $caption_html) {
+    $video_url = esc_url($video_url);
+    $poster_url = esc_url($poster_url);
+    if ($poster_url !== '') {
+        return sprintf(
+            '<figure><a href="%s" target="_blank" rel="noopener noreferrer"><img src="%s" alt="%s" loading="lazy" decoding="async"></a>%s</figure>',
+            $video_url,
+            $poster_url,
+            esc_attr__('视频封面', 'home-workflow'),
+            $caption_html !== '' ? $caption_html : '<figcaption><a href="' . $video_url . '" target="_blank" rel="noopener noreferrer">打开原视频</a></figcaption>'
+        );
+    }
+
+    return sprintf(
+        '<p><a href="%s" target="_blank" rel="noopener noreferrer">打开原视频</a></p>',
+        $video_url
+    );
+}
+
 function home_workflow_kb_x_article_figure_html($media) {
     $image_url = is_array($media) ? home_workflow_kb_x_api_media_url($media) : esc_url_raw((string) $media);
     $video_url = is_array($media) ? home_workflow_kb_x_api_video_url($media) : '';
@@ -2229,10 +2323,14 @@ function home_workflow_kb_x_article_figure_html($media) {
     $caption_html = $caption !== '' ? '<figcaption>' . esc_html($caption) . '</figcaption>' : '';
 
     if ($video_url !== '') {
+        $cached_video_url = home_workflow_kb_x_cached_video_url($video_url);
+        if ($cached_video_url === '') {
+            return home_workflow_kb_x_video_fallback_html($video_url, $image_url, $caption_html);
+        }
         $poster_attr = $image_url !== '' ? ' poster="' . esc_url($image_url) . '"' : '';
         return sprintf(
             '<figure><video controls playsinline preload="metadata" src="%s"%s></video>%s</figure>',
-            esc_url($video_url),
+            esc_url($cached_video_url),
             $poster_attr,
             $caption_html
         );
