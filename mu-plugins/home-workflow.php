@@ -1360,6 +1360,92 @@ function home_workflow_kb_home_url_with_category($category_id = 0, $fragment = '
     return $url;
 }
 
+function home_workflow_kb_post_primary_category_id($post_id = 0) {
+    $post_id = $post_id ? absint($post_id) : get_the_ID();
+    if (!$post_id) {
+        return 0;
+    }
+
+    $categories = array_values(array_filter(
+        get_the_category($post_id),
+        function ($category) {
+            return $category instanceof WP_Term && $category->slug !== 'uncategorized';
+        }
+    ));
+
+    return $categories ? (int) $categories[0]->term_id : 0;
+}
+
+function home_workflow_kb_post_reader_url($post_id = 0, $category_id = 0) {
+    $post_id = $post_id ? absint($post_id) : get_the_ID();
+    if (!$post_id) {
+        return home_url('/');
+    }
+
+    $url = get_permalink($post_id);
+    $category_id = home_workflow_kb_valid_category_id($category_id) ?: home_workflow_kb_post_primary_category_id($post_id);
+
+    return $category_id ? add_query_arg(['kb_category' => $category_id], $url) : $url;
+}
+
+function home_workflow_kb_single_context_category_id($post_id = 0) {
+    if (isset($_GET['kb_category'])) {
+        $category_id = home_workflow_kb_valid_category_id(wp_unslash($_GET['kb_category']));
+        if ($category_id) {
+            return $category_id;
+        }
+    }
+
+    return home_workflow_kb_post_primary_category_id($post_id);
+}
+
+add_filter('render_block_core/paragraph', function ($block_content, $block) {
+    if (home_workflow_site_kind() !== 'kb' || !is_singular('post')) {
+        return $block_content;
+    }
+
+    $class_name = $block['attrs']['className'] ?? '';
+    if (strpos($class_name, 'kb-reader-back') === false) {
+        return $block_content;
+    }
+
+    $category_id = home_workflow_kb_single_context_category_id(get_the_ID());
+    $back_url = home_workflow_kb_home_url_with_category($category_id);
+
+    return preg_replace('/href=(["\'])\/\1/', 'href=$1' . esc_url($back_url) . '$1', $block_content, 1) ?: $block_content;
+}, 10, 2);
+
+add_filter('render_block_core/post-terms', function ($block_content, $block) {
+    if (home_workflow_site_kind() !== 'kb' || !is_singular('post') || (($block['attrs']['term'] ?? '') !== 'category')) {
+        return $block_content;
+    }
+
+    $post_id = get_the_ID();
+    if (!$post_id) {
+        return $block_content;
+    }
+
+    $categories = get_the_category($post_id);
+    foreach ($categories as $category) {
+        if (!$category instanceof WP_Term || $category->slug === 'uncategorized') {
+            continue;
+        }
+
+        $default_link = get_term_link($category);
+        if (is_wp_error($default_link)) {
+            continue;
+        }
+
+        $block_content = str_replace(
+            'href="' . esc_url($default_link) . '"',
+            'href="' . esc_url(home_workflow_kb_home_url_with_category($category->term_id)) . '"',
+            $block_content
+        );
+    }
+
+    return $block_content;
+}, 10, 2);
+
 function home_workflow_kb_view_url($view, $category_id = 0, $extra_args = []) {
     $args = array_merge(['kb_view' => $view], $extra_args);
     if ($category_id) {
@@ -4921,6 +5007,8 @@ add_shortcode('kb_archive_home', function () {
                             ));
                             $category_label = $card_categories ? $card_categories[0]->name : '未分类';
                             $current_category_id = $card_categories ? (int) $card_categories[0]->term_id : 0;
+                            $reader_category_id = $selected_category instanceof WP_Term ? (int) $selected_category->term_id : $current_category_id;
+                            $reader_url = home_workflow_kb_post_reader_url(get_the_ID(), $reader_category_id);
                             $content_text = trim(preg_replace('/\s+/u', ' ', wp_strip_all_tags(get_the_content(null, false, get_the_ID()), true)));
                             $content_length = function_exists('mb_strlen') ? mb_strlen($content_text, 'UTF-8') : strlen($content_text);
                             $read_minutes = max(1, (int) ceil($content_length / 650));
@@ -4941,12 +5029,12 @@ add_shortcode('kb_archive_home', function () {
                                         <mark><?php echo esc_html($status === 'draft' ? '草稿' : '私密'); ?></mark>
                                     <?php endif; ?>
                                 </div>
-                                <h2><a href="<?php the_permalink(); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html(get_the_title()); ?></a></h2>
+                                <h2><a href="<?php echo esc_url($reader_url); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html(get_the_title()); ?></a></h2>
                                 <div class="kb-card-excerpt"><p><?php echo esc_html($excerpt); ?></p></div>
                                 <div class="kb-card-footer">
                                     <span><?php echo esc_html($source_site ?: '个人整理'); ?></span>
                                     <div class="kb-card-actions">
-                                        <a href="<?php the_permalink(); ?>" target="_blank" rel="noopener noreferrer">阅读</a>
+                                        <a href="<?php echo esc_url($reader_url); ?>" target="_blank" rel="noopener noreferrer">阅读</a>
                                         <?php if ($source_url) : ?>
                                             <a href="<?php echo esc_url($source_url); ?>" target="_blank" rel="noopener noreferrer">来源</a>
                                         <?php endif; ?>
