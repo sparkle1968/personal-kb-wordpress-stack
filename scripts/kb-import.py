@@ -1708,10 +1708,70 @@ def markdown_paragraph_html(lines: list[str]) -> str:
     return "<p>" + "<br>".join(markdown_inline_html(line) for line in clean_lines) + "</p>"
 
 
-def markdown_to_html(markdown: str) -> str:
+def markdown_table_cells(line: str) -> list[str]:
+    value = line.strip()
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|"):
+        value = value[:-1]
+    return [cell.replace(r"\|", "|").strip() for cell in re.split(r"(?<!\\)\|", value)]
+
+
+def markdown_table_separator(line: str) -> bool:
+    cells = markdown_table_cells(line)
+    return len(cells) >= 2 and all(
+        re.fullmatch(r":?-{3,}:?", re.sub(r"\s+", "", cell))
+        for cell in cells
+    )
+
+
+def markdown_tables_to_tokens(markdown: str) -> tuple[str, dict[str, str]]:
+    lines = markdown.split("\n")
+    rendered_lines: list[str] = []
+    tables: dict[str, str] = {}
+    index = 0
+
+    while index < len(lines):
+        if (
+            index + 1 < len(lines)
+            and "|" in lines[index]
+            and markdown_table_separator(lines[index + 1])
+        ):
+            headers = markdown_table_cells(lines[index])
+            rows: list[list[str]] = []
+            index += 2
+            while index < len(lines) and lines[index].strip() and "|" in lines[index]:
+                row = markdown_table_cells(lines[index])
+                if len(row) < len(headers):
+                    row.extend([""] * (len(headers) - len(row)))
+                rows.append(row[: len(headers)])
+                index += 1
+
+            header_html = "".join(f"<th>{markdown_inline_html(cell)}</th>" for cell in headers)
+            body_html = "".join(
+                "<tr>" + "".join(f"<td>{markdown_inline_html(cell)}</td>" for cell in row) + "</tr>"
+                for row in rows
+            )
+            token = f"KBMDTABLEBLOCK{len(tables)}END"
+            tables[token] = (
+                f"<table><thead><tr>{header_html}</tr></thead>"
+                + (f"<tbody>{body_html}</tbody>" if body_html else "")
+                + "</table>"
+            )
+            rendered_lines.extend(["", token, ""])
+            continue
+
+        rendered_lines.append(lines[index])
+        index += 1
+
+    return "\n".join(rendered_lines), tables
+
+
+def markdown_to_html(markdown: str, heading_offset: int = 0) -> str:
     markdown = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not markdown:
         return ""
+    markdown, table_blocks = markdown_tables_to_tokens(markdown)
 
     out: list[str] = []
     paragraph: list[str] = []
@@ -1771,6 +1831,13 @@ def markdown_to_html(markdown: str) -> str:
             flush_quote()
             continue
 
+        if stripped in table_blocks:
+            flush_paragraph()
+            flush_list()
+            flush_quote()
+            out.append(table_blocks[stripped])
+            continue
+
         if re.match(r"^[-*_]{3,}$", stripped):
             flush_paragraph()
             flush_list()
@@ -1783,7 +1850,7 @@ def markdown_to_html(markdown: str) -> str:
             flush_paragraph()
             flush_list()
             flush_quote()
-            level = min(6, len(heading.group(1)))
+            level = min(6, len(heading.group(1)) + max(0, heading_offset))
             out.append(f"<h{level}>{markdown_inline_html(heading.group(2))}</h{level}>")
             continue
 
@@ -2041,9 +2108,45 @@ def chatgpt_message_parts(content: dict) -> tuple[str, list[str]]:
     return "\n\n".join(text_parts), list(dict.fromkeys(image_pointers))
 
 
+def clean_chatgpt_message_text(text: str) -> str:
+    text = re.sub(r"(?:cite|filecite)[^]*", "", text)
+    text = re.sub(r"(?m)^\s*[-*_]{3,}\s*$", "", text)
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def chatgpt_file_attachment_names(message: dict) -> list[str]:
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    attachments = metadata.get("attachments")
+    if not isinstance(attachments, list):
+        return []
+
+    names: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        mime_type = str(attachment.get("mime_type") or "").lower()
+        if mime_type.startswith("image/"):
+            continue
+        name = clean_text(str(attachment.get("name") or ""))
+        if name:
+            names.append(name)
+    return list(dict.fromkeys(names))
+
+
+def chatgpt_assistant_text_is_internal(text: str) -> bool:
+    normalized = clean_text(text)
+    if normalized == "The output of this plugin was redacted.":
+        return True
+    return bool(re.fullmatch(r"(?:fast|standard|deep-research)\|https?://\S+", normalized, re.I))
+
+
 def chatgpt_conversation_to_html(conversation: dict, resolve_image) -> tuple[str, str]:
-    body_parts: list[str] = []
+    message_blocks: list[str] = []
     plain_text_parts: list[str] = []
+    question_count = 0
+    answer_count = 0
+    turn_index = 0
 
     for node in chatgpt_conversation_nodes(conversation):
         message = node.get("message") if isinstance(node.get("message"), dict) else node
@@ -2061,6 +2164,10 @@ def chatgpt_conversation_to_html(conversation: dict, resolve_image) -> tuple[str
         if content_type in {"code", "thoughts", "reasoning_recap", "model_editable_context", "execution_output"}:
             continue
         text, image_pointers = chatgpt_message_parts(content)
+        text = clean_chatgpt_message_text(text)
+        if role == "assistant" and chatgpt_assistant_text_is_internal(text):
+            text = ""
+        attachment_names = chatgpt_file_attachment_names(message)
         image_urls: list[str] = []
         for pointer in image_pointers:
             try:
@@ -2070,24 +2177,74 @@ def chatgpt_conversation_to_html(conversation: dict, resolve_image) -> tuple[str
             if image_url:
                 image_urls.append(image_url)
 
-        if not text and not image_pointers:
+        if not text and not image_pointers and not attachment_names:
             continue
-        if body_parts:
-            body_parts.append("<hr>")
-        body_parts.append("<h2>提问</h2>" if role == "user" else "<h2>ChatGPT 回答</h2>")
+
+        if role == "user":
+            turn_index += 1
+            question_count += 1
+            role_label = "提问"
+            role_class = "user"
+        else:
+            answer_count += 1
+            role_label = "ChatGPT 回答"
+            role_class = "assistant"
+
+        message_content: list[str] = []
         if text:
-            body_parts.append(markdown_to_html(text) or text_to_html(text))
+            message_content.append(markdown_to_html(text, heading_offset=1) or text_to_html(text))
             plain_text_parts.append(text)
         for index, image_url in enumerate(image_urls, start=1):
             safe_url = html.escape(image_url, quote=True)
-            body_parts.append(
-                '<figure><img src="{url}" alt="ChatGPT 分享附件 {index}" loading="lazy" decoding="async">'
+            message_content.append(
+                '<figure class="kb-chat-figure"><img src="{url}" alt="ChatGPT 分享附件 {index}" loading="lazy" decoding="async">'
                 '<figcaption>分享中的图片附件</figcaption></figure>'.format(url=safe_url, index=index)
             )
         if image_pointers and not image_urls:
-            body_parts.append("<p><em>图片附件暂时无法读取，请打开原始分享链接查看。</em></p>")
+            message_content.append(
+                '<p class="kb-chat-attachment-note"><em>图片附件暂时无法读取，请打开原始分享链接查看。</em></p>'
+            )
+        for attachment_name in attachment_names:
+            message_content.append(
+                '<div class="kb-chat-file"><span>文件附件</span><strong>{name}</strong></div>'.format(
+                    name=html.escape(attachment_name)
+                )
+            )
 
-    return "\n\n".join(body_parts), "\n\n".join(plain_text_parts)
+        if not message_content:
+            continue
+        message_blocks.append(
+            '<section class="kb-chat-message kb-chat-message-{role_class}">'
+            '<header class="kb-chat-message-head">'
+            '<span class="kb-chat-role">{role_label}</span>'
+            '<span class="kb-chat-turn">第 {turn} 轮</span>'
+            '</header>'
+            '<div class="kb-chat-message-body">{content}</div>'
+            '</section>'.format(
+                role_class=role_class,
+                role_label=role_label,
+                turn=max(1, turn_index),
+                content="\n".join(message_content),
+            )
+        )
+
+    if not message_blocks:
+        return "", ""
+
+    transcript_head = (
+        '<div class="kb-chat-transcript-head">'
+        '<p class="kb-chat-transcript-kicker">ChatGPT 对话归档</p>'
+        '<p class="kb-chat-transcript-count">{questions} 次提问 · {answers} 段回答</p>'
+        '</div>'.format(questions=question_count, answers=answer_count)
+    )
+    body = (
+        '<div class="kb-chat-transcript" aria-label="ChatGPT 对话记录">'
+        + transcript_head
+        + "\n".join(message_blocks)
+        + "</div>"
+    )
+
+    return body, "\n\n".join(plain_text_parts)
 
 
 def chatgpt_share_id(url: str) -> str:

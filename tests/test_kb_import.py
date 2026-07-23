@@ -65,7 +65,11 @@ class ChatGPTShareImportTest(unittest.TestCase):
                         "author": {"role": "assistant"},
                         "content": {
                             "content_type": "text",
-                            "parts": ["**结论**\n\n- 第一项\n- 第二项"],
+                            "parts": [
+                                "# 检查结论\n\n"
+                                "| 项目 | 结果 |\n| --- | --- |\n| CEA | 30.3 |\n\n"
+                                "**总体判断**：继续结合影像检查。citeturn0search0"
+                            ],
                         },
                     }
                 },
@@ -87,11 +91,20 @@ class ChatGPTShareImportTest(unittest.TestCase):
         )
 
         self.assertEqual(parsed["title"], "脱敏示例对话")
-        self.assertIn("<h2>提问</h2>", body)
-        self.assertIn("<h2>ChatGPT 回答</h2>", body)
-        self.assertIn("<strong>结论</strong>", body)
+        self.assertIn('class="kb-chat-transcript"', body)
+        self.assertIn('class="kb-chat-message kb-chat-message-user"', body)
+        self.assertIn('class="kb-chat-message kb-chat-message-assistant"', body)
+        self.assertIn('<span class="kb-chat-role">提问</span>', body)
+        self.assertIn('<span class="kb-chat-role">ChatGPT 回答</span>', body)
+        self.assertIn("<h2>检查结论</h2>", body)
+        self.assertIn("<table>", body)
+        self.assertIn("<th>项目</th>", body)
+        self.assertIn("<td>30.3</td>", body)
+        self.assertIn("<strong>总体判断</strong>", body)
         self.assertIn("https://example.com/attachment.png", body)
         self.assertNotIn("隐藏指令", body)
+        self.assertNotIn("cite", body)
+        self.assertNotIn("<h1>", body)
         self.assertIn("请分析这份脱敏资料", text)
 
     def test_extracts_new_post_message_slice(self):
@@ -107,6 +120,15 @@ class ChatGPTShareImportTest(unittest.TestCase):
                             "author": {"role": "assistant"},
                             "recipient": "python",
                             "content": {"content_type": "code", "text": "隐藏工具代码"},
+                        },
+                        {
+                            "author": {"role": "assistant"},
+                            "recipient": "all",
+                            "channel": "final",
+                            "content": {
+                                "content_type": "text",
+                                "parts": ["fast|https://example.com/internal"],
+                            },
                         },
                         {
                             "author": {"role": "assistant"},
@@ -141,7 +163,52 @@ class ChatGPTShareImportTest(unittest.TestCase):
         self.assertEqual(parsed["shared_conversation_id"], "t_example1234567890")
         self.assertIn("这是最终回答正文", body)
         self.assertNotIn("隐藏工具代码", body)
+        self.assertNotIn("fast|", body)
         self.assertEqual(text, "这是最终回答正文。")
+
+    def test_keeps_file_attachment_context(self):
+        conversation = {
+            "linear_conversation": [
+                {
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {"content_type": "text", "parts": [""]},
+                        "metadata": {
+                            "attachments": [
+                                {
+                                    "name": "脱敏检查报告.pdf",
+                                    "mime_type": "application/pdf",
+                                }
+                            ]
+                        },
+                    }
+                },
+                {
+                    "message": {
+                        "author": {"role": "assistant"},
+                        "content": {"content_type": "text", "parts": ["已阅读附件。"]},
+                    }
+                },
+            ]
+        }
+
+        body, _ = KB_IMPORT.chatgpt_conversation_to_html(conversation, lambda _: "")
+
+        self.assertIn("1 次提问 · 1 段回答", body)
+        self.assertIn("文件附件", body)
+        self.assertIn("脱敏检查报告.pdf", body)
+
+    def test_markdown_table_and_heading_offset(self):
+        rendered = KB_IMPORT.markdown_to_html(
+            "# 一级标题\n\n| 项目 | 结果 |\n| :--- | ---: |\n| CA15-3 | 19.3 |",
+            heading_offset=1,
+        )
+
+        self.assertIn("<h2>一级标题</h2>", rendered)
+        self.assertIn("<table>", rendered)
+        self.assertIn("<thead>", rendered)
+        self.assertIn("<tbody>", rendered)
+        self.assertIn("<td>CA15-3</td>", rendered)
 
     def test_recognizes_supported_share_hosts(self):
         self.assertTrue(KB_IMPORT.is_chatgpt_share_url("https://chatgpt.com/share/example-id"))
