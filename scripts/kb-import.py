@@ -8,6 +8,7 @@ import base64
 import hashlib
 import html
 from html.parser import HTMLParser
+from http import cookiejar
 import ipaddress
 import json
 import mimetypes
@@ -222,6 +223,26 @@ class MetadataParser(HTMLParser):
 
     def title(self) -> str:
         return clean_text(" ".join(self.title_parts))
+
+
+class ScriptTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.current: list[str] | None = None
+        self.scripts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "script":
+            self.current = []
+
+    def handle_data(self, data: str) -> None:
+        if self.current is not None:
+            self.current.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "script" and self.current is not None:
+            self.scripts.append("".join(self.current))
+            self.current = None
 
 
 class ImageRefParser(HTMLParser):
@@ -1806,6 +1827,341 @@ def markdown_to_html(markdown: str) -> str:
     return "\n\n".join(out)
 
 
+def is_chatgpt_share_url(url: str) -> bool:
+    parsed = parse.urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    share_path = re.match(
+        r"^/(?:share/[A-Za-z0-9_-]+|s/t_[A-Za-z0-9_-]+)(?:/|$)",
+        parsed.path,
+    )
+    return host in {"chatgpt.com", "chat.openai.com"} and bool(share_path)
+
+
+def fetch_chatgpt_share_page(url: str, allow_private: bool = False):
+    ok, reason = check_fetch_url(url, allow_private)
+    if not ok:
+        raise ValueError(f"Refusing to fetch {url}: {reason}")
+
+    cookies = cookiejar.CookieJar()
+    opener = request.build_opener(request.HTTPCookieProcessor(cookies))
+    req = request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Encoding": "identity",
+        },
+    )
+    with opener.open(req, timeout=30) as resp:
+        content_type = resp.headers.get_content_type()
+        if content_type not in {"text/html", "application/xhtml+xml"}:
+            raise ValueError(f"ChatGPT share URL returned unsupported content type: {content_type}")
+        data = read_limited(resp, MAX_HTML_BYTES)
+        charset = resp.headers.get_content_charset() or html_charset(data) or "utf-8"
+        return data.decode(charset, "replace"), resp.geturl(), opener
+
+
+def decode_chatgpt_flattened(values: list):
+    if not values:
+        raise ValueError("ChatGPT share payload is empty")
+
+    memo: dict[int, object] = {}
+
+    def resolve(index: int):
+        if index < 0:
+            return None
+        if index >= len(values):
+            raise ValueError("ChatGPT share payload contains an invalid reference")
+        if index in memo:
+            return memo[index]
+
+        raw = values[index]
+        if isinstance(raw, dict):
+            decoded: dict[str, object] = {}
+            memo[index] = decoded
+            for raw_key, raw_value in raw.items():
+                key_match = re.fullmatch(r"_(\d+)", raw_key)
+                key = resolve(int(key_match.group(1))) if key_match else raw_key
+                if not isinstance(key, (str, int, float, bool)):
+                    continue
+                decoded[str(key)] = (
+                    resolve(raw_value)
+                    if isinstance(raw_value, int) and not isinstance(raw_value, bool)
+                    else raw_value
+                )
+            return decoded
+
+        if isinstance(raw, list):
+            decoded_list: list[object] = []
+            memo[index] = decoded_list
+            decoded_list.extend(
+                resolve(item) if isinstance(item, int) and not isinstance(item, bool) else item
+                for item in raw
+            )
+            return decoded_list
+
+        memo[index] = raw
+        return raw
+
+    return resolve(0)
+
+
+def chatgpt_post_conversation(post: dict) -> dict | None:
+    attachments = post.get("attachments")
+    if not isinstance(attachments, list):
+        return None
+
+    messages: list[dict] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_messages = attachment.get("messages")
+        if not isinstance(attachment_messages, list):
+            continue
+        messages.extend(message for message in attachment_messages if isinstance(message, dict))
+
+    if not messages:
+        return None
+
+    return {
+        "title": clean_text(str(post.get("text") or post.get("og_title") or "")),
+        "linear_conversation": [{"message": message} for message in messages],
+        "shared_conversation_id": str(post.get("id") or ""),
+    }
+
+
+def chatgpt_share_conversation(source: str) -> dict:
+    parser = ScriptTextParser()
+    parser.feed(source)
+    chunks: list[str] = []
+    enqueue_pattern = re.compile(
+        r"window\.__reactRouterContext\.streamController\.enqueue\((.*)\);",
+        re.S,
+    )
+    for script in parser.scripts:
+        match = enqueue_pattern.fullmatch(script.strip())
+        if not match:
+            continue
+        try:
+            chunk = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(chunk, str):
+            chunks.append(chunk)
+
+    for line in "".join(chunks).splitlines():
+        if not line.lstrip().startswith("["):
+            continue
+        try:
+            flattened = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(flattened, list):
+            continue
+        root = decode_chatgpt_flattened(flattened)
+        stack = [root]
+        visited: set[int] = set()
+        while stack:
+            item = stack.pop()
+            if isinstance(item, (dict, list)):
+                item_id = id(item)
+                if item_id in visited:
+                    continue
+                visited.add(item_id)
+            if isinstance(item, dict):
+                if isinstance(item.get("mapping"), dict) and (
+                    isinstance(item.get("linear_conversation"), list) or item.get("current_node")
+                ):
+                    return item
+                post_conversation = chatgpt_post_conversation(item)
+                if post_conversation:
+                    return post_conversation
+                stack.extend(item.values())
+            elif isinstance(item, list):
+                stack.extend(item)
+
+    raise ValueError("ChatGPT share page does not contain a readable conversation")
+
+
+def chatgpt_conversation_nodes(conversation: dict) -> list[dict]:
+    linear = conversation.get("linear_conversation")
+    if isinstance(linear, list):
+        return [item for item in linear if isinstance(item, dict)]
+
+    mapping = conversation.get("mapping")
+    current = conversation.get("current_node")
+    if not isinstance(mapping, dict) or not isinstance(current, str):
+        return []
+
+    nodes: list[dict] = []
+    visited: set[str] = set()
+    while current and current not in visited:
+        visited.add(current)
+        node = mapping.get(current)
+        if not isinstance(node, dict):
+            break
+        nodes.append(node)
+        parent = node.get("parent")
+        current = parent if isinstance(parent, str) else ""
+    nodes.reverse()
+    return nodes
+
+
+def chatgpt_message_parts(content: dict) -> tuple[str, list[str]]:
+    text_parts: list[str] = []
+    image_pointers: list[str] = []
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        parts = []
+
+    for part in parts:
+        if isinstance(part, str):
+            if part.strip():
+                text_parts.append(part.strip())
+            continue
+        if not isinstance(part, dict):
+            continue
+
+        content_type = str(part.get("content_type") or "")
+        if content_type in {"image_asset_pointer", "image_url"}:
+            pointer = part.get("asset_pointer") or part.get("image_url") or part.get("url")
+            if isinstance(pointer, str) and pointer.strip():
+                image_pointers.append(pointer.strip())
+            continue
+        for key in ("text", "content"):
+            value = part.get(key)
+            if isinstance(value, str) and value.strip():
+                text_parts.append(value.strip())
+                break
+
+    if not text_parts:
+        text = content.get("text")
+        if isinstance(text, str) and text.strip():
+            text_parts.append(text.strip())
+    return "\n\n".join(text_parts), list(dict.fromkeys(image_pointers))
+
+
+def chatgpt_conversation_to_html(conversation: dict, resolve_image) -> tuple[str, str]:
+    body_parts: list[str] = []
+    plain_text_parts: list[str] = []
+
+    for node in chatgpt_conversation_nodes(conversation):
+        message = node.get("message") if isinstance(node.get("message"), dict) else node
+        author = message.get("author") if isinstance(message.get("author"), dict) else {}
+        role = str(author.get("role") or "")
+        if role not in {"user", "assistant"}:
+            continue
+
+        content = message.get("content") if isinstance(message.get("content"), dict) else {}
+        content_type = str(content.get("content_type") or "")
+        recipient = str(message.get("recipient") or "")
+        channel = str(message.get("channel") or "")
+        if role == "assistant" and (recipient not in {"", "all"} or channel not in {"", "final"}):
+            continue
+        if content_type in {"code", "thoughts", "reasoning_recap", "model_editable_context", "execution_output"}:
+            continue
+        text, image_pointers = chatgpt_message_parts(content)
+        image_urls: list[str] = []
+        for pointer in image_pointers:
+            try:
+                image_url = resolve_image(pointer)
+            except (OSError, ValueError, error.URLError, error.HTTPError, json.JSONDecodeError):
+                image_url = ""
+            if image_url:
+                image_urls.append(image_url)
+
+        if not text and not image_pointers:
+            continue
+        if body_parts:
+            body_parts.append("<hr>")
+        body_parts.append("<h2>提问</h2>" if role == "user" else "<h2>ChatGPT 回答</h2>")
+        if text:
+            body_parts.append(markdown_to_html(text) or text_to_html(text))
+            plain_text_parts.append(text)
+        for index, image_url in enumerate(image_urls, start=1):
+            safe_url = html.escape(image_url, quote=True)
+            body_parts.append(
+                '<figure><img src="{url}" alt="ChatGPT 分享附件 {index}" loading="lazy" decoding="async">'
+                '<figcaption>分享中的图片附件</figcaption></figure>'.format(url=safe_url, index=index)
+            )
+        if image_pointers and not image_urls:
+            body_parts.append("<p><em>图片附件暂时无法读取，请打开原始分享链接查看。</em></p>")
+
+    return "\n\n".join(body_parts), "\n\n".join(plain_text_parts)
+
+
+def chatgpt_share_id(url: str) -> str:
+    match = re.match(
+        r"^/(?:share/([A-Za-z0-9_-]+)|s/(t_[A-Za-z0-9_-]+))(?:/|$)",
+        parse.urlparse(url).path,
+    )
+    return next((group for group in match.groups() if group), "") if match else ""
+
+
+def chatgpt_asset_download_url(asset_pointer: str, share_url: str, opener) -> str:
+    parsed = parse.urlparse(asset_pointer)
+    if parsed.scheme in {"http", "https"}:
+        ok, _ = check_fetch_url(asset_pointer)
+        return asset_pointer if ok else ""
+    if parsed.scheme != "sediment":
+        return ""
+
+    file_id = parsed.netloc or parsed.path.lstrip("/")
+    if not re.fullmatch(r"file_[A-Za-z0-9_-]{8,}", file_id):
+        return ""
+    query = parse.parse_qs(parsed.query)
+    shared_id = (query.get("shared_conversation_id") or [chatgpt_share_id(share_url)])[0]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,}", shared_id or ""):
+        return ""
+
+    endpoint = "https://chatgpt.com/backend-api/files/download/" + parse.quote(file_id, safe="")
+    endpoint += "?" + parse.urlencode({"shared_conversation_id": shared_id, "inline": "true"})
+    req = request.Request(
+        endpoint,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+            "Referer": share_url,
+        },
+    )
+    with opener.open(req, timeout=30) as resp:
+        data = read_limited(resp, 1024 * 1024)
+        payload = json.loads(data.decode(resp.headers.get_content_charset() or "utf-8", "replace"))
+    download_url = str(payload.get("download_url") or "") if isinstance(payload, dict) else ""
+    ok, _ = check_fetch_url(download_url)
+    return download_url if ok else ""
+
+
+def content_from_chatgpt_share(url: str, args: argparse.Namespace) -> dict:
+    source, final_url, opener = fetch_chatgpt_share_page(url, args.allow_private_url)
+    conversation = chatgpt_share_conversation(source)
+    image_cache: dict[str, str] = {}
+
+    def resolve_image(pointer: str) -> str:
+        if pointer not in image_cache:
+            image_cache[pointer] = chatgpt_asset_download_url(pointer, final_url, opener)
+        return image_cache[pointer]
+
+    body, plain_text = chatgpt_conversation_to_html(conversation, resolve_image)
+    if not body:
+        raise ValueError("ChatGPT share page contains no visible user or assistant messages")
+
+    meta = parse_metadata(source)
+    remote_title = clean_text(str(conversation.get("title") or ""))
+    if not remote_title:
+        remote_title = re.sub(r"^ChatGPT\s*-\s*", "", meta.title(), flags=re.I)
+    return {
+        "title": args.title or remote_title or "ChatGPT 分享对话",
+        "content": body,
+        "excerpt": args.excerpt or summarize(plain_text),
+        "source_url": args.source_url or final_url,
+        "source_site": args.source_site or "ChatGPT",
+        "source_author": args.source_author or "ChatGPT",
+        "base_url": final_url,
+    }
+
+
 def read_local_content(path: Path, force_html: bool = False) -> str:
     text = path.read_text()
     if force_html or re.search(r"</?[a-z][\s>/]", text, re.I):
@@ -1982,6 +2338,9 @@ def kb_content(args: argparse.Namespace, body: str) -> str:
 
 
 def content_from_url(url: str, args: argparse.Namespace) -> dict:
+    if is_chatgpt_share_url(url):
+        return content_from_chatgpt_share(url, args)
+
     if is_medisearch_share_url(url):
         return content_from_medisearch(url, args)
 
