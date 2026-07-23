@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 
@@ -30,6 +31,68 @@ def flatten(value):
 
     add(value)
     return values
+
+
+class XArticleImportTest(unittest.TestCase):
+    def test_extracts_and_formats_full_text_from_x_stream(self):
+        source = (
+            '$R[1]={__id:"article",__typename:"ArticleEntity",'
+            'rest_id:"1234567890",title:"Obsidian 入门",preview_text:"只有摘要",'
+            'cover_media_results:$R[2]={__ref:"cover"},'
+            'plain_text:"完整开头。\\n\\n一、下载安装\\n\\n'
+            '1. 安装桌面版\\n访问 \\x3Chttps://obsidian.md>",'
+            'content_state:null}'
+        )
+
+        article = KB_IMPORT.x_article_entity_from_stream(source)
+        result = KB_IMPORT.content_from_x_article_entity(
+            article,
+            SimpleNamespace(
+                title="",
+                excerpt="",
+                source_url="",
+                source_site="",
+                source_author="",
+            ),
+            "https://x.com/example/status/1234567890",
+            "示例作者",
+            "https://x.com/example",
+        )
+
+        self.assertEqual(article["title"], "Obsidian 入门")
+        self.assertIn("完整开头", article["text"])
+        self.assertIn("<https://obsidian.md>", article["text"])
+        self.assertIn("<h2>一、下载安装</h2>", result["content"])
+        self.assertIn("<h3>1. 安装桌面版</h3>", result["content"])
+        self.assertIn('href="https://obsidian.md"', result["content"])
+        self.assertNotIn("文章导读", result["content"])
+        self.assertIn("完整开头", result["excerpt"])
+
+    def test_keeps_preview_fallback_when_full_text_is_missing(self):
+        article = {
+            "rest_id": "1234567890",
+            "title": "仅摘要文章",
+            "preview": "这是文章摘要。",
+            "text": "",
+            "cover_url": "",
+            "url": "https://x.com/i/article/1234567890",
+        }
+        result = KB_IMPORT.content_from_x_article_entity(
+            article,
+            SimpleNamespace(
+                title="",
+                excerpt="",
+                source_url="",
+                source_site="",
+                source_author="",
+            ),
+            "https://x.com/example/status/1234567890",
+            "",
+            "",
+        )
+
+        self.assertIn("<h2>文章导读</h2>", result["content"])
+        self.assertIn("这是文章摘要", result["content"])
 
 
 class ChatGPTShareImportTest(unittest.TestCase):

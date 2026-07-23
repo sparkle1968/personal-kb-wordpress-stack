@@ -898,6 +898,8 @@ def x_article_heading(line: str) -> str:
         return "h2"
     if re.match(r"^\d+\s*[.．、]\s*(有顺序|无序|步骤|选项|项目)", line):
         return ""
+    if re.match(r"^\d+\s*[.．、]\s*\S", line):
+        return "h3"
     if re.match(r"^拓展[一二三四五六七八九十]+[：:]", line):
         return "h2"
     return ""
@@ -969,7 +971,10 @@ def x_article_text_to_html(text: str, media_items: list[dict]) -> str:
         if rendered:
             output.append(f"<{tag}>{rendered}</{tag}>")
 
-    lines = [raw_line.strip() for raw_line in text.splitlines()]
+    lines = [
+        re.sub(r"<(https?://[^\s>]+)>", r"\1", raw_line.strip())
+        for raw_line in text.splitlines()
+    ]
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -1408,10 +1413,16 @@ def fetch_x_page_html(url: str, allow_private: bool = False) -> tuple[str, str]:
 
 
 def decode_js_string_literal(value: str) -> str:
+    normalized = re.sub(r"\\x([0-9A-Fa-f]{2})", r"\\u00\1", value)
     try:
-        decoded = json.loads('"' + value + '"')
+        decoded = json.loads('"' + normalized + '"')
     except json.JSONDecodeError:
-        return value.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
+        fallback = re.sub(
+            r"\\x([0-9A-Fa-f]{2})",
+            lambda match: chr(int(match.group(1), 16)),
+            value,
+        )
+        return fallback.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
     return decoded if isinstance(decoded, str) else ""
 
 
@@ -1452,30 +1463,64 @@ def x_author_from_meta(source: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def js_object_containing_marker(source: str, marker_start: int) -> str:
+    assignments = list(re.finditer(r"\$R\[\d+\]=\{", source[:marker_start]))
+    object_start = assignments[-1].end() - 1 if assignments else source.rfind("{", 0, marker_start)
+    if object_start < 0:
+        return ""
+
+    depth = 0
+    quote = ""
+    escaped = False
+    for index in range(object_start, len(source)):
+        char = source[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {'"', "'", "`"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[object_start : index + 1]
+    return ""
+
+
 def x_article_entity_from_stream(source: str) -> dict:
-    match = re.search(
-        r'__typename:"ArticleEntity",rest_id:"((?:\\.|[^"\\])*)",title:"((?:\\.|[^"\\])*)",preview_text:"((?:\\.|[^"\\])*)"',
-        source,
-        re.S,
-    )
-    if not match:
-        return {}
+    for marker in re.finditer(r'__typename:"ArticleEntity"', source):
+        record = js_object_containing_marker(source, marker.start())
+        if not record:
+            continue
 
-    rest_id = clean_text(decode_js_string_literal(match.group(1)))
-    title = clean_text(decode_js_string_literal(match.group(2)))
-    preview = clean_text_preserve_breaks(decode_js_string_literal(match.group(3)))
-    cover_url = first_js_string(source, r'original_img_url:"((?:\\.|[^"\\])*)"')
+        rest_id = clean_text(first_js_string(record, r'rest_id:"((?:\\.|[^"\\])*)"'))
+        title = clean_text(first_js_string(record, r'title:"((?:\\.|[^"\\])*)"'))
+        preview = clean_text_preserve_breaks(
+            first_js_string(record, r'preview_text:"((?:\\.|[^"\\])*)"')
+        )
+        full_text = clean_text_preserve_breaks(
+            first_js_string(record, r'plain_text:"((?:\\.|[^"\\])*)"')
+        )
+        cover_url = first_js_string(source, r'original_img_url:"((?:\\.|[^"\\])*)"')
 
-    if not title and not preview:
-        return {}
+        if not title and not preview and not full_text:
+            continue
 
-    return {
-        "rest_id": rest_id,
-        "title": title,
-        "preview": preview,
-        "cover_url": cover_url,
-        "url": f"https://x.com/i/article/{rest_id}" if rest_id else "",
-    }
+        return {
+            "rest_id": rest_id,
+            "title": title,
+            "preview": preview,
+            "text": full_text,
+            "cover_url": cover_url,
+            "url": f"https://x.com/i/article/{rest_id}" if rest_id else "",
+        }
+    return {}
 
 
 def content_from_x_article_entity(article: dict, args: argparse.Namespace, final_url: str, author_label: str, author_url: str) -> dict:
@@ -1487,12 +1532,27 @@ def content_from_x_article_entity(article: dict, args: argparse.Namespace, final
             f'<p><strong>X Article：</strong><a href="{safe_url}" target="_blank" rel="noopener noreferrer">{html.escape(article_url)}</a></p>'
         )
 
-    cover_url = str(article.get("cover_url") or "")
-    if cover_url:
-        pieces.append(figure_html_for_media({"media_url_https": cover_url, "display_url": article.get("title") or "X Article"}))
-
+    full_text = clean_text_preserve_breaks(str(article.get("text") or ""))
     preview = clean_text_preserve_breaks(str(article.get("preview") or ""))
-    if preview:
+    cover_url = str(article.get("cover_url") or "")
+    if full_text:
+        media_items = (
+            [{"media_url_https": cover_url, "display_url": article.get("title") or "X Article"}]
+            if cover_url
+            else []
+        )
+        pieces.append(x_article_text_to_html(full_text, media_items))
+    else:
+        if cover_url:
+            pieces.append(
+                figure_html_for_media(
+                    {
+                        "media_url_https": cover_url,
+                        "display_url": article.get("title") or "X Article",
+                    }
+                )
+            )
+    if preview and not full_text:
         pieces.append("<h2>文章导读</h2>")
         pieces.append(text_with_links_to_html(preview))
 
@@ -1510,7 +1570,7 @@ def content_from_x_article_entity(article: dict, args: argparse.Namespace, final
     return {
         "title": article_title if title_should_use_remote(args.title) and article_title else (args.title or article_title or "X Article"),
         "content": "\n".join(piece for piece in pieces if piece),
-        "excerpt": args.excerpt or summarize(preview),
+        "excerpt": args.excerpt or summarize(full_text or preview),
         "source_url": args.source_url or final_url,
         "source_site": args.source_site or "X / Twitter",
         "source_author": args.source_author or author_label,
