@@ -4584,27 +4584,39 @@ function home_workflow_render_kb_trash_view() {
     };
     $posts_per_page = 8;
     $requested_page = isset($_GET['kb_trash_page']) ? max(1, absint($_GET['kb_trash_page'])) : 1;
-    $trash_query_args = [
-        'post_type' => 'post',
-        'post_status' => 'trash',
-        'posts_per_page' => $posts_per_page,
-        'paged' => $requested_page,
-        'orderby' => 'modified',
-        'order' => 'DESC',
+    global $wpdb;
+
+    // Bypass posts_pre_query here because it can inject non-trash posts into this view.
+    $trash_where = [
+        'post_type = %s',
+        'post_status = %s',
     ];
+    $trash_where_args = ['post', 'trash'];
     if (!current_user_can('delete_others_posts')) {
-        $trash_query_args['author'] = get_current_user_id();
+        $trash_where[] = 'post_author = %d';
+        $trash_where_args[] = get_current_user_id();
     }
 
-    $trash_query = new WP_Query($trash_query_args);
-    $max_pages = max(1, (int) $trash_query->max_num_pages);
-    if ($requested_page > $max_pages) {
-        wp_reset_postdata();
-        $requested_page = $max_pages;
-        $trash_query_args['paged'] = $requested_page;
-        $trash_query = new WP_Query($trash_query_args);
-    }
+    $trash_where_sql = implode(' AND ', $trash_where);
+    $trash_count_sql = $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$wpdb->posts} WHERE {$trash_where_sql}",
+        $trash_where_args
+    );
+    $trash_count = (int) $wpdb->get_var($trash_count_sql);
+    $max_pages = max(1, (int) ceil($trash_count / $posts_per_page));
     $current_page = min($requested_page, $max_pages);
+    $trash_offset = ($current_page - 1) * $posts_per_page;
+    $trash_list_args = array_merge($trash_where_args, [$posts_per_page, $trash_offset]);
+    $trash_list_sql = $wpdb->prepare(
+        "SELECT * FROM {$wpdb->posts} WHERE {$trash_where_sql} ORDER BY post_modified DESC, ID DESC LIMIT %d OFFSET %d",
+        $trash_list_args
+    );
+    $trash_posts = array_map(
+        static function ($post_row) {
+            return new WP_Post($post_row);
+        },
+        $wpdb->get_results($trash_list_sql)
+    );
 
     ob_start();
     ?>
@@ -4618,17 +4630,17 @@ function home_workflow_render_kb_trash_view() {
     </header>
 
     <section class="kb-trash-list" aria-label="回收站文章">
-        <?php if ($trash_query->have_posts()) : ?>
-            <?php while ($trash_query->have_posts()) : $trash_query->the_post(); ?>
+        <?php if ($trash_posts) : ?>
+            <?php foreach ($trash_posts as $trash_post) : ?>
                 <?php
-                $post_id = get_the_ID();
+                $post_id = (int) $trash_post->ID;
                 $attachment_count = count(home_workflow_kb_attachment_ids_for_post($post_id)) + count(home_workflow_kb_static_video_paths_for_post($post_id));
                 ?>
                 <article class="kb-trash-card">
                     <div>
-                        <time datetime="<?php echo esc_attr(get_the_modified_date('c')); ?>"><?php echo esc_html(get_the_modified_date('Y.m.d H:i')); ?></time>
-                        <h2><?php echo esc_html(get_the_title()); ?></h2>
-                        <p><?php echo esc_html(wp_trim_words(wp_strip_all_tags(get_the_excerpt(), true), 42)); ?></p>
+                        <time datetime="<?php echo esc_attr(get_the_modified_date('c', $trash_post)); ?>"><?php echo esc_html(get_the_modified_date('Y.m.d H:i', $trash_post)); ?></time>
+                        <h2><?php echo esc_html(get_the_title($trash_post)); ?></h2>
+                        <p><?php echo esc_html(wp_trim_words(wp_strip_all_tags(get_the_excerpt($trash_post), true), 42)); ?></p>
                         <small><?php echo esc_html((string) $attachment_count); ?> 个关联附件/静态视频</small>
                     </div>
                     <div class="kb-trash-actions">
@@ -4646,8 +4658,7 @@ function home_workflow_render_kb_trash_view() {
                         </form>
                     </div>
                 </article>
-            <?php endwhile; ?>
-            <?php wp_reset_postdata(); ?>
+            <?php endforeach; ?>
         <?php else : ?>
             <article class="kb-card kb-empty">
                 <h2>回收站是空的</h2>
