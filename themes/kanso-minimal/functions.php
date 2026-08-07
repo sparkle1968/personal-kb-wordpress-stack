@@ -14,6 +14,17 @@ add_action('wp_enqueue_scripts', function () {
     $style_path = get_stylesheet_directory() . '/style.css';
     $style_version = file_exists($style_path) ? (string) filemtime($style_path) : wp_get_theme()->get('Version');
     wp_enqueue_style('kanso-minimal-style', get_stylesheet_uri(), [], $style_version);
+
+    $ui_script_path = get_stylesheet_directory() . '/assets/kb-ui.js';
+    if (file_exists($ui_script_path)) {
+        wp_enqueue_script(
+            'kanso-minimal-ui',
+            get_theme_file_uri('assets/kb-ui.js'),
+            [],
+            (string) filemtime($ui_script_path),
+            true
+        );
+    }
 });
 
 function kanso_minimal_pwa_enabled() {
@@ -174,12 +185,15 @@ function kanso_minimal_pwa_manifest() {
 
 function kanso_minimal_pwa_service_worker() {
     $version = kanso_minimal_pwa_version();
+    $ui_script_path = get_stylesheet_directory() . '/assets/kb-ui.js';
+    $ui_script_version = file_exists($ui_script_path) ? (string) filemtime($ui_script_path) : $version;
     $cache_name = 'personal-kb-shell-' . preg_replace('/[^A-Za-z0-9_-]/', '', $version);
     $offline_url = home_url('/kb-offline/');
     $asset_urls = [
         $offline_url,
         add_query_arg('v', $version, kanso_minimal_pwa_manifest_url()),
-        add_query_arg('v', $version, get_stylesheet_uri()),
+        add_query_arg('ver', $version, get_stylesheet_uri()),
+        add_query_arg('ver', $ui_script_version, get_theme_file_uri('assets/kb-ui.js')),
         add_query_arg('v', $version, get_theme_file_uri('assets/kb-favicon.svg')),
         add_query_arg('v', $version, get_theme_file_uri('assets/kb-icon-192.png')),
         add_query_arg('v', $version, get_theme_file_uri('assets/kb-icon-512.png')),

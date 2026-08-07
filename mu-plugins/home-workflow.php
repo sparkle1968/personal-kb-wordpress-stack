@@ -1013,35 +1013,39 @@ function home_workflow_public_share_controls($post_id) {
 
     ob_start();
     ?>
-    <aside class="source-note public-share-tools">
-        <strong>公开分享：</strong>
-        <?php if ($updated === 'enable') : ?>
-            <span>分享链接已生成。</span>
-        <?php elseif ($updated === 'regenerate') : ?>
-            <span>新分享链接已生成，旧链接已经失效。</span>
-        <?php elseif ($updated === 'disable') : ?>
-            <span>分享链接已关闭。</span>
-        <?php else : ?>
-            <span>登录的 viewer 账号可以把这一篇文章分享给未登录的人。</span>
-        <?php endif; ?>
-
-        <?php if ($enabled && $share_url) : ?>
-            <p>
-                <input id="home-public-share-url-frontend" type="text" readonly value="<?php echo esc_attr($share_url); ?>" style="width:100%;max-width:42rem;">
-                <button type="button" data-home-copy-share="#home-public-share-url-frontend">复制链接</button>
+    <details class="kb-reader-tool public-share-tools" <?php echo $updated !== '' ? 'open' : ''; ?>>
+        <summary>公开分享</summary>
+        <div class="kb-reader-tool-body">
+            <p class="kb-reader-tool-status">
+                <?php if ($updated === 'enable') : ?>
+                    分享链接已生成。
+                <?php elseif ($updated === 'regenerate') : ?>
+                    新分享链接已生成，旧链接已经失效。
+                <?php elseif ($updated === 'disable') : ?>
+                    分享链接已关闭。
+                <?php else : ?>
+                    登录的 viewer 账号可以把这一篇文章分享给未登录的人。
+                <?php endif; ?>
             </p>
-        <?php endif; ?>
 
-        <form method="post" action="<?php echo esc_url(get_permalink($post_id)); ?>" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-            <?php echo wp_nonce_field('home_public_share_frontend_' . $post_id, 'home_public_share_nonce', true, false); ?>
-            <?php if ($enabled) : ?>
-                <button type="submit" name="home_public_share_action" value="regenerate">重新生成链接</button>
-                <button type="submit" name="home_public_share_action" value="disable">关闭分享</button>
-            <?php else : ?>
-                <button type="submit" name="home_public_share_action" value="enable">生成分享链接</button>
+            <?php if ($enabled && $share_url) : ?>
+                <p class="kb-reader-share-link">
+                    <input id="home-public-share-url-frontend" type="text" readonly value="<?php echo esc_attr($share_url); ?>">
+                    <button type="button" data-home-copy-share="#home-public-share-url-frontend">复制链接</button>
+                </p>
             <?php endif; ?>
-        </form>
-    </aside>
+
+            <form method="post" action="<?php echo esc_url(get_permalink($post_id)); ?>">
+                <?php echo wp_nonce_field('home_public_share_frontend_' . $post_id, 'home_public_share_nonce', true, false); ?>
+                <?php if ($enabled) : ?>
+                    <button type="submit" name="home_public_share_action" value="regenerate">重新生成链接</button>
+                    <button type="submit" name="home_public_share_action" value="disable">关闭分享</button>
+                <?php else : ?>
+                    <button type="submit" name="home_public_share_action" value="enable">生成分享链接</button>
+                <?php endif; ?>
+            </form>
+        </div>
+    </details>
     <?php
     return trim((string) ob_get_clean());
 }
@@ -1581,6 +1585,8 @@ function home_workflow_kb_sidebar_critical_css() {
     return '<style id="kb-sidebar-critical-css">'
         . '@media (min-width:901px){'
         . '.kb-sidebar{display:flex!important;flex-direction:column!important;align-items:stretch!important;height:100vh!important;min-height:100vh!important;overflow-y:auto!important;}'
+        . '.kb-mobile-nav-toggle{display:none!important;}'
+        . '.kb-sidebar-panel{display:flex!important;flex:1 0 auto!important;flex-direction:column!important;min-height:100%!important;}'
         . '.kb-sidebar br{display:none!important;}'
         . '.kb-sidebar .kb-side-title,.kb-sidebar .kb-side-nav,.kb-sidebar .kb-side-block{flex:0 0 auto!important;}'
         . '.kb-sidebar .kb-side-nav{display:flex!important;flex-direction:column!important;justify-content:flex-start!important;align-content:flex-start!important;gap:4px!important;margin:26px 0 20px!important;height:auto!important;min-height:0!important;}'
@@ -1663,41 +1669,47 @@ function home_workflow_kb_sidebar($active_view, $categories, $category_counts, $
     ob_start();
     ?>
     <?php echo home_workflow_kb_sidebar_critical_css(); ?>
-    <aside class="kb-sidebar">
-        <div class="kb-side-title">
-            <span>Quiet Archive</span>
-            <strong>个人知识库</strong>
+    <aside class="kb-sidebar" data-kb-mobile-nav>
+        <button class="kb-mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="kb-sidebar-panel" title="打开菜单">
+            <span class="kb-mobile-nav-brand">个人知识库</span>
+            <span class="kb-mobile-nav-icon" aria-hidden="true">☰</span>
+        </button>
+        <div class="kb-sidebar-panel" id="kb-sidebar-panel">
+            <div class="kb-side-title">
+                <span>Quiet Archive</span>
+                <strong>个人知识库</strong>
+            </div>
+            <?php echo home_workflow_kb_style_switch(); ?>
+            <nav class="kb-side-nav" aria-label="资料馆导航">
+                <?php echo home_workflow_kb_nav_link($home_url, '目录', $home_active); ?>
+                <?php echo home_workflow_kb_nav_link($home_search_url, '检索', $search_active); ?>
+                <?php if ($can_edit) : ?>
+                    <?php echo home_workflow_kb_nav_link($draft_url, '草稿', $draft_active); ?>
+                    <?php echo home_workflow_kb_nav_link($new_url, '新资料', $new_active, 'target="_blank" rel="noopener noreferrer"'); ?>
+                <?php endif; ?>
+                <?php if (current_user_can('delete_posts')) : ?>
+                    <?php echo home_workflow_kb_nav_link($trash_url, '回收站', $trash_active); ?>
+                <?php endif; ?>
+                <?php if (current_user_can('manage_categories')) : ?>
+                    <?php echo home_workflow_kb_nav_link($category_manager_url, '分类管理'); ?>
+                <?php endif; ?>
+                <?php if (home_workflow_kb_can_manage_accounts()) : ?>
+                    <?php echo home_workflow_kb_nav_link($sync_url, '同步设置', $active_view === 'sync'); ?>
+                    <?php echo home_workflow_kb_nav_link($accounts_url, '账号管理', $accounts_active); ?>
+                <?php endif; ?>
+            </nav>
+            <div class="kb-side-block">
+                <span>分类</span>
+                <?php foreach ($categories as $category) : ?>
+                    <?php $category_url = $category_url_callback ? (string) call_user_func($category_url_callback, $category) : home_workflow_kb_home_url_with_category($category->term_id); ?>
+                    <a href="<?php echo esc_url($category_url); ?>" class="<?php echo $active_category_id === (int) $category->term_id ? 'is-active' : ''; ?>" <?php echo $active_category_id === (int) $category->term_id ? 'aria-current="page"' : ''; ?>>
+                        <span><?php echo esc_html($category->name); ?></span>
+                        <small><?php echo esc_html((string) ($category_counts[$category->term_id] ?? 0)); ?></small>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+            <div class="kb-logout-wrap"><a class="kb-logout" href="<?php echo esc_url(wp_logout_url(wp_login_url())); ?>">退出登录</a></div>
         </div>
-        <?php echo home_workflow_kb_style_switch(); ?>
-        <nav class="kb-side-nav" aria-label="资料馆导航">
-            <?php echo home_workflow_kb_nav_link($home_url, '目录', $home_active); ?>
-            <?php echo home_workflow_kb_nav_link($home_search_url, '检索', $search_active); ?>
-            <?php if ($can_edit) : ?>
-                <?php echo home_workflow_kb_nav_link($draft_url, '草稿', $draft_active); ?>
-                <?php echo home_workflow_kb_nav_link($new_url, '新资料', $new_active, 'target="_blank" rel="noopener noreferrer"'); ?>
-            <?php endif; ?>
-            <?php if (current_user_can('delete_posts')) : ?>
-                <?php echo home_workflow_kb_nav_link($trash_url, '回收站', $trash_active); ?>
-            <?php endif; ?>
-            <?php if (current_user_can('manage_categories')) : ?>
-                <?php echo home_workflow_kb_nav_link($category_manager_url, '分类管理'); ?>
-            <?php endif; ?>
-            <?php if (home_workflow_kb_can_manage_accounts()) : ?>
-                <?php echo home_workflow_kb_nav_link($sync_url, '同步设置', $active_view === 'sync'); ?>
-                <?php echo home_workflow_kb_nav_link($accounts_url, '账号管理', $accounts_active); ?>
-            <?php endif; ?>
-        </nav>
-        <div class="kb-side-block">
-            <span>分类</span>
-            <?php foreach ($categories as $category) : ?>
-                <?php $category_url = $category_url_callback ? (string) call_user_func($category_url_callback, $category) : home_workflow_kb_home_url_with_category($category->term_id); ?>
-                <a href="<?php echo esc_url($category_url); ?>" class="<?php echo $active_category_id === (int) $category->term_id ? 'is-active' : ''; ?>" <?php echo $active_category_id === (int) $category->term_id ? 'aria-current="page"' : ''; ?>>
-                    <span><?php echo esc_html($category->name); ?></span>
-                    <small><?php echo esc_html((string) ($category_counts[$category->term_id] ?? 0)); ?></small>
-                </a>
-            <?php endforeach; ?>
-        </div>
-        <div class="kb-logout-wrap"><a class="kb-logout" href="<?php echo esc_url(wp_logout_url(wp_login_url())); ?>">退出登录</a></div>
     </aside>
     <?php
     return trim(ob_get_clean());
@@ -3390,13 +3402,12 @@ function home_workflow_kb_frontend_edit_controls($post_id) {
 
     ob_start();
     ?>
-    <section class="kb-front-edit" aria-label="前台编辑">
+    <details class="kb-reader-tool kb-front-edit" aria-label="前台编辑" <?php echo $is_open ? 'open' : ''; ?>>
+        <summary>编辑文章</summary>
         <?php if (!empty($_GET['kb_saved'])) : ?>
             <div class="kb-front-edit-notice">已保存。</div>
         <?php endif; ?>
-        <details <?php echo $is_open ? 'open' : ''; ?>>
-            <summary>编辑标题和正文</summary>
-            <form class="kb-front-edit-form" method="post" action="<?php echo esc_url($form_action); ?>">
+        <form class="kb-front-edit-form" method="post" action="<?php echo esc_url($form_action); ?>">
                 <input type="hidden" name="home_kb_inline_edit_action" value="save">
                 <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) $post_id); ?>">
                 <?php wp_nonce_field('home_kb_inline_edit_' . $post_id, 'home_kb_inline_edit_nonce'); ?>
@@ -3432,9 +3443,8 @@ function home_workflow_kb_frontend_edit_controls($post_id) {
                     <button type="submit">保存到当前文章</button>
                     <a href="<?php echo esc_url($cancel_url); ?>">取消</a>
                 </div>
-            </form>
-        </details>
-    </section>
+        </form>
+    </details>
     <?php
 
     return trim(ob_get_clean());
@@ -5027,6 +5037,10 @@ add_shortcode('kb_archive_home', function () {
                             if (function_exists('mb_strlen') && mb_strlen($excerpt, 'UTF-8') > 180) {
                                 $excerpt = mb_substr($excerpt, 0, 180, 'UTF-8') . '...';
                             }
+                            $can_edit_card = $can_edit && current_user_can('edit_post', get_the_ID());
+                            $can_assign_card_category = $can_edit_card && current_user_can('assign_categories') && $categories;
+                            $can_delete_card = $can_edit && current_user_can('delete_post', get_the_ID());
+                            $can_manage_card = $can_edit_card || $can_assign_card_category || $can_delete_card;
                             ?>
                             <article class="kb-card">
                                 <div class="kb-card-meta">
@@ -5049,38 +5063,45 @@ add_shortcode('kb_archive_home', function () {
                                         <?php if ($source_url) : ?>
                                             <a href="<?php echo esc_url($source_url); ?>" target="_blank" rel="noopener noreferrer">来源</a>
                                         <?php endif; ?>
-                                        <?php if ($can_edit && current_user_can('edit_post', get_the_ID())) : ?>
-                                            <a href="<?php echo esc_url(home_workflow_kb_frontend_edit_url(get_the_ID())); ?>" target="_blank" rel="noopener noreferrer">编辑</a>
-                                            <form class="kb-sticky-form" method="post" action="<?php echo esc_url(home_url('/')); ?>">
-                                                <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
-                                                <input type="hidden" name="home_kb_sticky_action" value="<?php echo is_sticky() ? 'unstick' : 'stick'; ?>">
-                                                <?php wp_nonce_field('home_kb_sticky_' . get_the_ID(), 'home_kb_sticky_nonce'); ?>
-                                                <button type="submit"><?php echo is_sticky() ? '取消置顶' : '置顶'; ?></button>
-                                            </form>
-                                        <?php endif; ?>
-                                        <?php if ($can_edit && current_user_can('edit_post', get_the_ID()) && current_user_can('assign_categories') && $categories) : ?>
-                                            <form class="kb-card-category-form" method="post" action="<?php echo esc_url(home_url('/')); ?>">
-                                                <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
-                                                <input type="hidden" name="home_kb_post_action" value="category">
-                                                <?php wp_nonce_field('home_kb_post_category_' . get_the_ID(), 'home_kb_post_nonce'); ?>
-                                                <label>
-                                                    <span class="screen-reader-text">修改文章分类</span>
-                                                    <select name="home_kb_post_category">
-                                                        <?php foreach ($categories as $category) : ?>
-                                                            <option value="<?php echo esc_attr((string) $category->term_id); ?>" <?php selected($current_category_id, (int) $category->term_id); ?>><?php echo esc_html($category->name); ?></option>
-                                                        <?php endforeach; ?>
-                                                    </select>
-                                                </label>
-                                                <button type="submit">改分类</button>
-                                            </form>
-                                        <?php endif; ?>
-                                        <?php if ($can_edit && current_user_can('delete_post', get_the_ID())) : ?>
-                                            <form class="kb-delete-form" method="post" action="<?php echo esc_url(home_url('/')); ?>" onsubmit="return confirm('确定把这篇文章移入回收站吗？');">
-                                                <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
-                                                <input type="hidden" name="home_kb_post_action" value="trash">
-                                                <?php wp_nonce_field('home_kb_post_trash_' . get_the_ID(), 'home_kb_post_nonce'); ?>
-                                                <button type="submit">删除</button>
-                                            </form>
+                                        <?php if ($can_manage_card) : ?>
+                                            <details class="kb-card-manage">
+                                                <summary aria-label="管理文章" title="管理文章">…</summary>
+                                                <div class="kb-card-manage-menu">
+                                                    <?php if ($can_edit_card) : ?>
+                                                        <a href="<?php echo esc_url(home_workflow_kb_frontend_edit_url(get_the_ID())); ?>" target="_blank" rel="noopener noreferrer">编辑</a>
+                                                        <form class="kb-sticky-form" method="post" action="<?php echo esc_url(home_url('/')); ?>">
+                                                            <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
+                                                            <input type="hidden" name="home_kb_sticky_action" value="<?php echo is_sticky() ? 'unstick' : 'stick'; ?>">
+                                                            <?php wp_nonce_field('home_kb_sticky_' . get_the_ID(), 'home_kb_sticky_nonce'); ?>
+                                                            <button type="submit"><?php echo is_sticky() ? '取消置顶' : '置顶'; ?></button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                    <?php if ($can_assign_card_category) : ?>
+                                                        <form class="kb-card-category-form" method="post" action="<?php echo esc_url(home_url('/')); ?>">
+                                                            <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
+                                                            <input type="hidden" name="home_kb_post_action" value="category">
+                                                            <?php wp_nonce_field('home_kb_post_category_' . get_the_ID(), 'home_kb_post_nonce'); ?>
+                                                            <label>
+                                                                <span class="screen-reader-text">修改文章分类</span>
+                                                                <select name="home_kb_post_category">
+                                                                    <?php foreach ($categories as $category) : ?>
+                                                                        <option value="<?php echo esc_attr((string) $category->term_id); ?>" <?php selected($current_category_id, (int) $category->term_id); ?>><?php echo esc_html($category->name); ?></option>
+                                                                    <?php endforeach; ?>
+                                                                </select>
+                                                            </label>
+                                                            <button type="submit">改分类</button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                    <?php if ($can_delete_card) : ?>
+                                                        <form class="kb-delete-form" method="post" action="<?php echo esc_url(home_url('/')); ?>" onsubmit="return confirm('确定把这篇文章移入回收站吗？');">
+                                                            <input type="hidden" name="home_kb_post_id" value="<?php echo esc_attr((string) get_the_ID()); ?>">
+                                                            <input type="hidden" name="home_kb_post_action" value="trash">
+                                                            <?php wp_nonce_field('home_kb_post_trash_' . get_the_ID(), 'home_kb_post_nonce'); ?>
+                                                            <button type="submit">删除</button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </details>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -5187,44 +5208,40 @@ add_filter('the_content', function ($content) {
         return $content;
     }
 
-    $front_edit = home_workflow_kb_frontend_edit_controls(get_the_ID());
-    if ($front_edit !== '') {
-        $content = $front_edit . $content;
-    }
-
-    $share_tools = home_workflow_public_share_controls(get_the_ID());
-    if ($share_tools !== '') {
-        $content = $share_tools . $content;
-    }
+    $prelude = [];
 
     if (home_workflow_current_request_is_public_share()) {
-        $content = '<aside class="source-note public-share-note"><strong>分享阅读：</strong>你正在通过公开分享链接阅读这篇文章，站内其他内容仍需要登录。</aside>' . $content;
+        $prelude[] = '<aside class="source-note public-share-note"><strong>分享阅读：</strong>你正在通过公开分享链接阅读这篇文章，站内其他内容仍需要登录。</aside>';
     }
 
     $url = get_post_meta(get_the_ID(), 'source_url', true);
-    if (!$url) {
-        return $content;
+    if ($url) {
+        $site = get_post_meta(get_the_ID(), 'source_site', true);
+        $author = get_post_meta(get_the_ID(), 'source_author', true);
+        $bits = [];
+
+        if ($site) {
+            $bits[] = esc_html($site);
+        }
+        if ($author) {
+            $bits[] = esc_html($author);
+        }
+
+        $label = $bits ? implode(' / ', $bits) : '来源链接';
+        $prelude[] = sprintf(
+            '<aside class="source-note kb-source-meta"><strong>来源</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></aside>',
+            esc_url($url),
+            $label
+        );
     }
 
-    $site = get_post_meta(get_the_ID(), 'source_site', true);
-    $author = get_post_meta(get_the_ID(), 'source_author', true);
-    $bits = [];
-
-    if ($site) {
-        $bits[] = esc_html($site);
-    }
-    if ($author) {
-        $bits[] = esc_html($author);
+    $front_edit = home_workflow_kb_frontend_edit_controls(get_the_ID());
+    $share_tools = home_workflow_public_share_controls(get_the_ID());
+    if ($front_edit !== '' || $share_tools !== '') {
+        $prelude[] = '<div class="kb-reader-tools" aria-label="文章工具">' . $front_edit . $share_tools . '</div>';
     }
 
-    $label = $bits ? implode(' / ', $bits) : '来源链接';
-    $source = sprintf(
-        '<aside class="source-note"><strong>来源：</strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></aside>',
-        esc_url($url),
-        $label
-    );
-
-    return $source . $content;
+    return implode('', $prelude) . $content;
 }, 12);
 
 function home_workflow_open_content_links_in_new_tab($content) {
