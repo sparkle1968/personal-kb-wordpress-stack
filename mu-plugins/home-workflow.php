@@ -1413,8 +1413,7 @@ add_filter('render_block_core/paragraph', function ($block_content, $block) {
         return $block_content;
     }
 
-    $category_id = home_workflow_kb_single_context_category_id(get_the_ID());
-    $back_url = home_workflow_kb_home_url_with_category($category_id);
+    $back_url = home_url('/');
 
     return preg_replace('/href=(["\'])\/\1/', 'href=$1' . esc_url($back_url) . '$1', $block_content, 1) ?: $block_content;
 }, 10, 2);

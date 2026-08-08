@@ -3,7 +3,7 @@ Theme Name: Kanso Minimal
 Theme URI: https://example.com/
 Author: Codex
 Description: A quiet Japanese-inspired block theme for family notes and knowledge archives.
-Version: 1.0.46
+Version: 1.0.47
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.2
@@ -3650,6 +3650,33 @@ body.kb-style-magazine .kb-page-head h1 {
 /* Quiet upgrade: reading tools, compact management, and mobile navigation. */
 .kb-mobile-nav-toggle {
   display: none;
+}
+
+.kb-pwa-close {
+  display: none;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  color: var(--kb-blue);
+  font: 500 30px/1 var(--kanso-sans);
+  text-decoration: none;
+}
+
+html.kb-pwa-standalone body.single .kb-pwa-close {
+  display: grid;
+}
+
+@media (display-mode: standalone) {
+  body.single .kb-pwa-close {
+    display: grid;
+  }
+}
+
+.kb-pwa-close:hover,
+.kb-pwa-close:focus-visible {
+  color: var(--kb-copper);
 }
 
 .kb-sidebar-panel {

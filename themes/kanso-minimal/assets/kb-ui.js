@@ -2,6 +2,9 @@
   'use strict';
 
   document.documentElement.classList.add('kb-ui-ready');
+  if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+    document.documentElement.classList.add('kb-pwa-standalone');
+  }
 
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
