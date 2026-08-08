@@ -5053,12 +5053,12 @@ add_shortcode('kb_archive_home', function () {
                                         <mark><?php echo esc_html($status === 'draft' ? '草稿' : '私密'); ?></mark>
                                     <?php endif; ?>
                                 </div>
-                                <h2><a href="<?php echo esc_url($reader_url); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html(get_the_title()); ?></a></h2>
+                                <h2><a href="<?php echo esc_url($reader_url); ?>"><?php echo esc_html(get_the_title()); ?></a></h2>
                                 <div class="kb-card-excerpt"><p><?php echo esc_html($excerpt); ?></p></div>
                                 <div class="kb-card-footer">
                                     <span><?php echo esc_html($source_site ?: '个人整理'); ?></span>
                                     <div class="kb-card-actions">
-                                        <a href="<?php echo esc_url($reader_url); ?>" target="_blank" rel="noopener noreferrer">阅读</a>
+                                        <a href="<?php echo esc_url($reader_url); ?>">阅读</a>
                                         <?php if ($source_url) : ?>
                                             <a href="<?php echo esc_url($source_url); ?>" target="_blank" rel="noopener noreferrer">来源</a>
                                         <?php endif; ?>
