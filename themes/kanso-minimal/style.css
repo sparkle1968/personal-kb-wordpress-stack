@@ -3,7 +3,7 @@ Theme Name: Kanso Minimal
 Theme URI: https://example.com/
 Author: Codex
 Description: A quiet Japanese-inspired block theme for family notes and knowledge archives.
-Version: 1.0.47
+Version: 1.0.48
 Requires at least: 6.5
 Tested up to: 6.8
 Requires PHP: 8.2
@@ -4317,5 +4317,133 @@ body.single .wp-block-post-content pre.kb-code-block,
   .kb-back-to-top,
   .kb-card-manage > summary {
     transition: none;
+  }
+}
+
+/* Keep paper typography independent of screen size and the reading layout. */
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  #wpadminbar,
+  .site-header,
+  .site-footer,
+  .kb-reader-back,
+  .kb-reader-tools,
+  .public-share-tools,
+  .kb-front-edit,
+  .kb-reader-toc,
+  .kb-reading-progress,
+  .kb-back-to-top,
+  .kb-code-copy {
+    display: none !important;
+  }
+
+  body.single .wp-site-blocks,
+  body.single .kb-reader,
+  body.single .kb-reader-article,
+  body.single .kb-reader-head,
+  body.single .wp-block-post-content {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body.single .kb-reader-article {
+    border-top: 0;
+  }
+
+  body.single .kb-reader-head {
+    margin-bottom: 6mm !important;
+    padding-bottom: 4mm !important;
+  }
+
+  body.single .wp-block-post-content > * {
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  body.single .wp-block-post-content {
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+    color: #000 !important;
+  }
+
+  body.single .wp-block-post-content :is(p, li, blockquote, table, td, th) {
+    font-size: 11pt !important;
+    orphans: 3;
+    widows: 3;
+  }
+
+  body.single .wp-block-post-title {
+    max-width: none !important;
+    font-size: 20pt !important;
+    line-height: 1.3 !important;
+    word-break: normal !important;
+  }
+
+  body.single .wp-block-post-content :is(h1, h2) {
+    font-size: 14pt !important;
+  }
+
+  body.single .wp-block-post-content :is(h3, h4, h5, h6) {
+    font-size: 12pt !important;
+  }
+
+  body.single :is(h1, h2, h3, h4, h5, h6) {
+    line-height: 1.4 !important;
+    break-after: avoid;
+  }
+
+  body.single :is(.wp-block-post-date, .kb-reader-terms, .kb-reader-tags, figcaption) {
+    font-size: 9pt !important;
+  }
+
+  body.single .wp-block-post-content :is(pre, code) {
+    font-size: 9pt !important;
+    line-height: 1.5 !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere;
+  }
+
+  body.single .wp-block-post-content pre {
+    padding: 3mm !important;
+    overflow: visible !important;
+  }
+
+  body.single .wp-block-post-content table {
+    display: table;
+    table-layout: fixed;
+    overflow-wrap: anywhere;
+  }
+
+  body.single :is(.wp-block-post-content, .wp-block-post-featured-image) img {
+    max-width: 100% !important;
+    height: auto !important;
+    box-shadow: none;
+  }
+
+  body.single .kb-reader-article .wp-block-post-content > :is(figure, .wp-block-image) {
+    margin: 1em 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
   }
 }
